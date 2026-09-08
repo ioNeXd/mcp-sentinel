@@ -64,6 +64,16 @@ VALID_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 KNOWN_BRIDGES = {"mcp-remote", "supergateway", "mcp-proxy"}
 BRIDGE_NAME_HINTS = ("remote", "proxy", "gateway", "bridge")
 
+
+def _load_config_json(source_path: Path) -> Any:
+    """Lê e faz parse do JSON, convertendo erros em mensagens claras."""
+    try:
+        return json.loads(source_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"arquivo não encontrado: {source_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JSON malformado em {source_path}: {exc}") from exc
+
 DEFAULT_OUTPUT = Path("config/config.imported.json")
 
 
@@ -196,12 +206,7 @@ def import_config(
     Levanta ``ValueError`` com mensagem clara para arquivos ausentes,
     malformados ou sem a seção ``mcpServers``.
     """
-    try:
-        raw: Any = json.loads(source_path.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ValueError(f"arquivo não encontrado: {source_path}") from exc
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"JSON malformado em {source_path}: {exc}") from exc
+    raw = _load_config_json(source_path)
     if not isinstance(raw, dict) or not isinstance(raw.get("mcpServers"), dict):
         raise ValueError(
             f"{source_path} não tem a seção 'mcpServers' (isso é um "
@@ -331,7 +336,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     if options.list_servers:
-        raw = json.loads(source.read_text(encoding="utf-8"))
+        try:
+            raw = _load_config_json(source)
+        except ValueError as exc:
+            print(f"ERRO: {exc}", file=sys.stderr)
+            return 2
         servers = raw.get("mcpServers") if isinstance(raw, dict) else None
         if not isinstance(servers, dict):
             print("ERRO: seção 'mcpServers' não encontrada.", file=sys.stderr)

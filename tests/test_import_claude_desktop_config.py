@@ -348,6 +348,32 @@ def test_cli_list_servers(
     assert "npx" in out and "http://x" in out
 
 
+def test_cli_list_servers_json_malformado(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = tmp_path / "claude_desktop_config.json"
+    source.write_text("{ not json", encoding="utf-8")
+
+    exit_code, out, err = _run_cli(source, capsys, "--list-servers")
+
+    assert exit_code == 2
+    assert out == ""
+    assert "ERRO:" in err
+    assert "JSONDecodeError" not in err
+
+
+def test_cli_list_servers_json_valido_preserva_saida(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = write_source(tmp_path, {"fs": dict(SIMPLE_STDIO_ENTRY)})
+
+    exit_code, out, err = _run_cli(source, capsys, "--list-servers")
+
+    assert exit_code == 0
+    assert err == ""
+    assert out == f"Servidores em {source} (1):\n  - fs: npx\n"
+
+
 def test_cli_sem_nada_convertivel_retorna_erro(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
