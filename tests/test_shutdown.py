@@ -88,8 +88,9 @@ async def test_graceful_shutdown_propaga_cancelamento_do_chamador(
     """Cancelamento do main() DURANTE o shutdown: propaga, nunca é engolido.
 
     Exceções comuns são isoladas por etapa (a próxima etapa roda), mas
-    ``CancelledError`` propaga imediatamente — engoli-lo mascararia um
-    desligamento em andamento do event loop.
+    ``CancelledError`` só propaga depois de ambas as etapas — engoli-lo
+    mascararia um desligamento em andamento do event loop, mas propagá-lo no
+    meio impediria os backends de serem finalizados.
     """
     from main import _graceful_shutdown
 
@@ -115,7 +116,7 @@ async def test_graceful_shutdown_propaga_cancelamento_do_chamador(
     with pytest.raises(asyncio.CancelledError):
         await shutdown_task
 
-    assert stop_calls == []  # cancelamento propaga: etapa seguinte não roda
+    assert stop_calls == ["mcp"]  # a etapa seguinte roda antes de propagar
     # Cleanup do teste: para o monitor e os backends de verdade.
     monkeypatch.undo()
     await monitor.stop()

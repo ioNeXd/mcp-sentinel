@@ -146,21 +146,24 @@ async def _graceful_shutdown(
     do ``main()`` no meio do shutdown) não impede a seguinte de rodar.
     Emite ``gateway_shutdown_complete`` quando ambos os passos terminam.
     """
+    cancelled = False
     try:
         await health_monitor.stop()
     except asyncio.CancelledError:
         logger.warning("shutdown_health_monitor_cancelado")
-        raise
+        cancelled = True
     except Exception as exc:
         logger.error("falha ao parar o health monitor", error=str(exc))
     try:
         await mcp_server.stop()
     except asyncio.CancelledError:
         logger.warning("shutdown_backends_cancelado")
-        raise
+        cancelled = True
     except Exception as exc:
         logger.error("falha ao parar os backends", error=str(exc))
     logger.info("gateway_shutdown_complete")
+    if cancelled:
+        raise asyncio.CancelledError
 
 
 if __name__ == "__main__":
