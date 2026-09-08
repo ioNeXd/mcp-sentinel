@@ -34,7 +34,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES
-from gateway.errors import BackendError
+from gateway.errors import (
+    BackendError,
+    BackendNotFoundError,
+    BackendStateConflictError,
+)
 from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_error
 from gateway.server import McpServer
 from gateway import __version__
@@ -197,14 +201,13 @@ def create_app(
     def _backend_error_response(exc: BackendError) -> JSONResponse:
         """Traduz BackendError das rotas de controle em 404/409/503.
 
-        Mensagens do manager: 'não existe no config' -> 404; 'enable só se
-        aplica a backends disabled' -> 409 (estado conflitante); demais
-        (falha de subida, indisponibilidade) -> 503.
+        BackendNotFoundError -> 404; BackendStateConflictError -> 409;
+        demais (falha de subida, indisponibilidade) -> 503.
         """
         message = str(exc)
-        if "não existe no config" in message:
+        if isinstance(exc, BackendNotFoundError):
             status = 404
-        elif "enable só se aplica" in message:
+        elif isinstance(exc, BackendStateConflictError):
             status = 409
         else:
             status = 503

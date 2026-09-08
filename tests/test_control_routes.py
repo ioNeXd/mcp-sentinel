@@ -5,6 +5,7 @@ import httpx
 
 from conftest import FakeClient, make_manager_for_clients
 from gateway.backend_manager import BackendStatus
+from gateway.errors import BackendError
 from gateway.http_server import create_app
 from gateway.server import McpServer
 
@@ -119,6 +120,23 @@ async def test_enable_em_backend_nao_disabled_retorna_409() -> None:
         app = create_app(server)
         resp = await post_control(app, "/api/servers/backend-a/enable")
         assert resp.status_code == 409  # running: enable não se aplica
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_mensagem_semantica_nao_classifica_backend_error_por_substring() -> None:
+    server = await make_app()
+    try:
+        app = create_app(server)
+
+        async def renamed_error(name: str) -> None:
+            raise BackendError("backend não existe no config, mas erro genérico")
+
+        server.backend_manager.disable = renamed_error  # type: ignore[method-assign]
+        resp = await post_control(app, "/api/servers/backend-a/disable")
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "backend não existe no config, mas erro genérico"
     finally:
         await server.stop()
 

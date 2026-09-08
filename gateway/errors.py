@@ -7,6 +7,14 @@ class BackendError(Exception):
     """Erro genérico de comunicação com um backend MCP."""
 
 
+class BackendNotFoundError(BackendError):
+    """Backend não existe na configuração do Gateway."""
+
+
+class BackendStateConflictError(BackendError):
+    """Operação incompatível com o estado atual do backend."""
+
+
 class BackendTimeoutError(BackendError):
     """Backend não respondeu dentro do timeout configurado."""
 

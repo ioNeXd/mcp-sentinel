@@ -67,13 +67,6 @@ class BackendConfig(BaseModel):
         ),
     )
 
-    @property
-    def effective_request_timeout(self) -> float:
-        """Timeout de request com o default aplicado."""
-        if self.request_timeout_seconds is not None:
-            return self.request_timeout_seconds
-        return DEFAULT_BACKEND_REQUEST_TIMEOUT_SECONDS
-
     @model_validator(mode="after")
     def _validate(self) -> "BackendConfig":
         if self.type is BackendType.STDIO:
@@ -90,7 +83,7 @@ class BackendConfig(BaseModel):
                 raise ValueError(
                     f"backend '{self.name}': 'url' é obrigatório quando type='{self.type.value}'"
                 )
-            if self.command is not None:
+            if self.command is not None or self.args:
                 raise ValueError(
                     f"backend '{self.name}': 'command'/'args' só se aplicam a backends stdio"
                     " (use 'url')"

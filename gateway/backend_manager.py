@@ -19,7 +19,12 @@ import structlog
 
 from gateway.clients.base import BaseClient
 from gateway.config import BackendConfig, BackendType, GatewayConfig
-from gateway.errors import BackendError, BackendJsonRpcError
+from gateway.errors import (
+    BackendError,
+    BackendJsonRpcError,
+    BackendNotFoundError,
+    BackendStateConflictError,
+)
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 
 logger = structlog.get_logger(__name__)
@@ -123,7 +128,7 @@ class BackendManager:
         """
         state = self._states.get(backend_name)
         if state is None:
-            raise BackendError(f"backend '{backend_name}' não existe no config")
+            raise BackendNotFoundError(f"backend '{backend_name}' não existe no config")
         if state.status is not BackendStatus.RUNNING or state.client is None:
             raise BackendError(f"backend '{backend_name}' não está disponível")
         return state.client
@@ -384,7 +389,7 @@ class BackendManager:
         """
         state = self._states.get(backend_name)
         if state is None:
-            raise BackendError(f"backend '{backend_name}' não existe no config")
+            raise BackendNotFoundError(f"backend '{backend_name}' não existe no config")
         if state.status is BackendStatus.DISABLED:
             return
         # Cancela restart agendado/em andamento: um backend desabilitado não
@@ -420,9 +425,9 @@ class BackendManager:
         """
         state = self._states.get(backend_name)
         if state is None:
-            raise BackendError(f"backend '{backend_name}' não existe no config")
+            raise BackendNotFoundError(f"backend '{backend_name}' não existe no config")
         if state.status is not BackendStatus.DISABLED:
-            raise BackendError(
+            raise BackendStateConflictError(
                 f"backend '{backend_name}': enable só se aplica a backends disabled"
                 f" (status atual: {state.status.value})"
             )
@@ -456,7 +461,7 @@ class BackendManager:
         """
         state = self._states.get(backend_name)
         if state is None:
-            raise BackendError(f"backend '{backend_name}' não existe no config")
+            raise BackendNotFoundError(f"backend '{backend_name}' não existe no config")
         pending = self._restart_tasks.get(backend_name)
         if pending is not None and not pending.done():
             pending.cancel()  # o restart manual assume o controle

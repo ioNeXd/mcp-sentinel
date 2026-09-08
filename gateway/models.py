@@ -48,7 +48,13 @@ class JsonRpcResponse(BaseModel):
 
 def make_result(request_id: JsonRpcId | None, result: Any) -> dict[str, Any]:
     """Monta um dict de resposta JSON-RPC com resultado."""
-    return JsonRpcResponse(jsonrpc="2.0", id=request_id, result=result).model_dump(exclude_none=True)
+    payload = JsonRpcResponse(
+        jsonrpc="2.0", id=request_id, result=result
+    ).model_dump(exclude_none=True)
+    payload["result"] = result
+    if request_id is None:
+        payload["id"] = None
+    return payload
 
 
 def make_error(

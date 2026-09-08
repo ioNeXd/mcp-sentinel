@@ -29,6 +29,10 @@ class TestBackendTypeValidation:
         with pytest.raises(ValidationError, match="só se aplicam a backends stdio"):
             BackendConfig(name="a", type="http", url="http://x", command="python")
 
+    def test_http_com_args_erro(self) -> None:
+        with pytest.raises(ValidationError, match="só se aplicam a backends stdio"):
+            BackendConfig(name="a", type="http", url="http://x", args=["x"])
+
     def test_sse_sem_url_erro(self) -> None:
         with pytest.raises(ValidationError, match="url.*obrigatório"):
             BackendConfig(name="a", type="sse")
@@ -52,18 +56,9 @@ class TestBackendTypeValidation:
         config = BackendConfig(name="a", command="python")
         assert config.type is BackendType.STDIO
 
-    def test_timeout_por_backend(self) -> None:
-        config = BackendConfig(name="a", type="http", url="http://x", request_timeout_seconds=2.5)
-        assert config.effective_request_timeout == 2.5
-
     def test_timeout_por_backend_invalido(self) -> None:
         with pytest.raises(ValidationError):
             BackendConfig(name="a", type="http", url="http://x", request_timeout_seconds=0)
-
-    def test_timeout_por_backend_omitido_usa_default(self) -> None:
-        config = BackendConfig(name="a", type="http", url="http://x")
-        assert config.effective_request_timeout > 0
-
 
 class TestGatewayRequestTimeout:
     """Resolução do timeout: específico do backend vence o global."""
