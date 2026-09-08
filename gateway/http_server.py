@@ -37,10 +37,11 @@ from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES
 from gateway.errors import BackendError
 from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_error
 from gateway.server import McpServer
+from gateway.version import __version__
 
 logger = structlog.get_logger(__name__)
 
-APP_VERSION = "0.5.0"
+APP_VERSION = __version__
 
 # Header de sessão da extensão de filtro seletivo (Fase 5) — definido em
 # gateway.sessions e reexportado aqui para uso das rotas.
@@ -78,10 +79,12 @@ def _render_dashboard(summary: dict[str, Any], servers: list[dict[str, Any]]) ->
     prompt_count = summary.get("prompts_count", 0)
     rows: list[str] = []
     for server in servers:
+        status_value = str(server.get("status", ""))
+        status_cell = html.escape(status_value)
         cells = (
             html.escape(str(server.get("name", ""))),
             html.escape(str(server.get("type", ""))),
-            html.escape(str(server.get("status", ""))),
+            status_cell,
             str(server.get("tools_count", 0)),
             str(server.get("resources_count", 0)),
             str(server.get("prompts_count", 0)),
@@ -92,7 +95,7 @@ def _render_dashboard(summary: dict[str, Any], servers: list[dict[str, Any]]) ->
             ),
         )
         row_cells = "".join(
-            f'<td class="status-{html.escape(str(server.get("status", ""))).upper()}">{cells[2]}</td>'
+            f'<td class="status-{status_cell.upper()}">{cells[2]}</td>'
             if i == 2
             else f"<td>{cell}</td>"
             for i, cell in enumerate(cells)

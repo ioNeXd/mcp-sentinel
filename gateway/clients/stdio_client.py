@@ -6,15 +6,13 @@ from typing import Any
 
 import structlog
 
-from gateway.clients.base import BaseClient, set_exception_guarded
+from gateway.clients.base import BaseClient, backend_jsonrpc_error, set_exception_guarded
 from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,
     BackendError,
-    BackendJsonRpcError,
     BackendTimeoutError,
 )
-from gateway.models import INTERNAL_ERROR
 
 logger = structlog.get_logger(__name__)
 
@@ -195,11 +193,7 @@ class StdioClient(BaseClient):
             if error is not None:
                 set_exception_guarded(
                     future,
-                    BackendJsonRpcError(
-                        code=error.get("code", INTERNAL_ERROR),
-                        message=str(error.get("message", "erro do backend")),
-                        data=error.get("data"),
-                    ),
+                    backend_jsonrpc_error(error),
                     backend=self._config.name,
                 )
             else:

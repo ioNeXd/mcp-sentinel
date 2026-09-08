@@ -7,11 +7,27 @@ from typing import Any
 import structlog
 
 from gateway.errors import BackendJsonRpcError
-from gateway.models import METHOD_NOT_FOUND
+from gateway.models import INTERNAL_ERROR, METHOD_NOT_FOUND
+from gateway.version import __version__
 
 PROTOCOL_VERSION = "2024-11-05"
+JSON_CONTENT_TYPE = "application/json"
+SSE_MEDIA_TYPE = "text/event-stream"
+EVENT_DATA_PREFIX = "data:"
+COMMENT_PREFIX = ":"
 
 logger = structlog.get_logger(__name__)
+
+
+def backend_jsonrpc_error(error: Any) -> BackendJsonRpcError:
+    """Converte o campo ``error`` de uma resposta JSON-RPC em erro de domínio."""
+    if isinstance(error, dict):
+        return BackendJsonRpcError(
+            code=error.get("code", INTERNAL_ERROR),
+            message=str(error.get("message", "erro do backend")),
+            data=error.get("data"),
+        )
+    return BackendJsonRpcError(code=INTERNAL_ERROR, message=str(error))
 
 
 def set_exception_guarded(future: asyncio.Future[Any], exc: Exception, *, backend: str) -> None:
@@ -97,7 +113,7 @@ class BaseClient(ABC):
             {
                 "protocolVersion": PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "mcp-gateway", "version": "0.1.0"},
+                "clientInfo": {"name": "mcp-gateway", "version": __version__},
             },
         )
         if isinstance(result, dict):

@@ -21,7 +21,7 @@ há descoberta automática de portas.
 
 **Status atual: Fase 5 concluída** — filtro seletivo de backends por sessão
 (extensão `gateway/session/*`), controle manual de backends, dashboard e
-importador. Testes: **205/205 passando**. O `SseClient` segue o padrão
+importador. Testes: **217/217 passando**. O `SseClient` segue o padrão
 HTTP+SSE do MCP (evento `endpoint` com URL literal), validado contra
 servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
 `AGENT_INSTRUCTIONS.md` para as regras de conduta.
@@ -214,6 +214,8 @@ python main.py
 Variáveis de ambiente:
 
 - `MCP_GATEWAY_PORT` — porta do Gateway (default `8080`).
+- `MCP_GATEWAY_HOST` — endereço de bind do Gateway (default seguro `127.0.0.1`);
+  defina `0.0.0.0` somente quando a exposição na rede for intencional.
 - `MCP_GATEWAY_CONFIG` — caminho do config (default `config/config.json`).
 
 No startup, os backends são iniciados e o log estruturado mostra quantas

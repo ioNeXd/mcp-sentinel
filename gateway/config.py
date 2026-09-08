@@ -167,8 +167,6 @@ class GatewayConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate(self) -> "GatewayConfig":
-        if self.auth_token == "":
-            raise ValueError("auth_token não pode ser uma string vazia (omitir ou usar um token)")
         if not self.backends:
             raise ValueError("config.json deve definir ao menos um backend")
         names = [backend.name for backend in self.backends]

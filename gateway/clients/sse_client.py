@@ -36,30 +36,31 @@ from urllib.parse import urljoin
 import httpx
 import structlog
 
-from gateway.clients.base import BaseClient, set_exception_guarded
+from gateway.clients.base import (
+    COMMENT_PREFIX,
+    EVENT_DATA_PREFIX,
+    JSON_CONTENT_TYPE,
+    SSE_MEDIA_TYPE,
+    BaseClient,
+    backend_jsonrpc_error,
+    set_exception_guarded,
+)
 from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,
     BackendError,
-    BackendJsonRpcError,
     BackendTimeoutError,
 )
-from gateway.models import INTERNAL_ERROR
 
 logger = structlog.get_logger(__name__)
 
 CONNECT_TIMEOUT_SECONDS = 5.0
 READY_TIMEOUT_SECONDS = 10.0  # backend deve aceitar a conexão do stream neste prazo
 
-JSON_CONTENT_TYPE = "application/json"
-SSE_MEDIA_TYPE = "text/event-stream"
-
 JSON_HEADERS = {"Content-Type": JSON_CONTENT_TYPE, "Accept": JSON_CONTENT_TYPE}
 
-EVENT_DATA_PREFIX = "data:"
 EVENT_ID_PREFIX = "id:"
 EVENT_NAME_PREFIX = "event:"
-COMMENT_PREFIX = ":"
 STREAM_PATH = "/"
 
 ENDPOINT_EVENT = "endpoint"  # nome do primeiro evento do spec HTTP+SSE (MCP)
@@ -435,15 +436,7 @@ class SseClient(BaseClient):
         if error is not None:
             set_exception_guarded(
                 future,
-                BackendJsonRpcError(
-                    code=error.get("code", INTERNAL_ERROR)
-                    if isinstance(error, dict)
-                    else INTERNAL_ERROR,
-                    message=str(error.get("message", "erro do backend"))
-                    if isinstance(error, dict)
-                    else str(error),
-                    data=error.get("data") if isinstance(error, dict) else None,
-                ),
+                backend_jsonrpc_error(error),
                 backend=self._config.name,
             )
         else:

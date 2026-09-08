@@ -36,12 +36,13 @@ from gateway.models import (
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 from gateway.registries.base import RegistryEntry
 from gateway.sessions import SESSION_HEADER, SessionFilter
+from gateway.version import __version__
 
 logger = structlog.get_logger(__name__)
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mcp-gateway"
-SERVER_VERSION = "0.5.0"
+SERVER_VERSION = __version__
 
 # Divisor heurístico para estimar tokens a partir de caracteres JSON (~4 chars
 # por token em inglês/JSON). Estimativa GROSSEIRA de diagnóstico — não substitui

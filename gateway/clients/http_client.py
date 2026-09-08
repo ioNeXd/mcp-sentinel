@@ -18,22 +18,22 @@ from collections.abc import AsyncIterator
 import httpx
 import structlog
 
-from gateway.clients.base import PROTOCOL_VERSION, BaseClient
+from gateway.clients.base import (
+    COMMENT_PREFIX,
+    EVENT_DATA_PREFIX,
+    JSON_CONTENT_TYPE,
+    SSE_MEDIA_TYPE,
+    BaseClient,
+    backend_jsonrpc_error,
+)
 from gateway.config import BackendConfig
-from gateway.errors import BackendDisconnectedError, BackendJsonRpcError, BackendTimeoutError
-from gateway.models import INTERNAL_ERROR
+from gateway.errors import BackendDisconnectedError, BackendTimeoutError
 
 logger = structlog.get_logger(__name__)
 
 # Intervalo de conexão: falha em conectar não deve esperar o timeout de request
 # completo (30s default) para ser reportada.
 CONNECT_TIMEOUT_SECONDS = 5.0
-
-JSON_CONTENT_TYPE = "application/json"
-SSE_MEDIA_TYPE = "text/event-stream"
-EVENT_DATA_PREFIX = "data:"
-COMMENT_PREFIX = ":"
-
 
 class HttpClient(BaseClient):
     """Fala JSON-RPC com um backend MCP remoto via POST na ``url`` do config."""
@@ -138,13 +138,7 @@ class HttpClient(BaseClient):
             )
         error = body.get("error")
         if error is not None:
-            raise BackendJsonRpcError(
-                code=error.get("code", INTERNAL_ERROR) if isinstance(error, dict) else INTERNAL_ERROR,
-                message=str(error.get("message", "erro do backend"))
-                if isinstance(error, dict)
-                else str(error),
-                data=error.get("data") if isinstance(error, dict) else None,
-            )
+            raise backend_jsonrpc_error(error)
         return body.get("result")
 
     async def _read_sse_response(
@@ -202,20 +196,6 @@ class HttpClient(BaseClient):
             logger.warning(
                 "http_notification_falhou", backend=self._config.name, method=method
             )
-
-    async def _initialize(self) -> None:
-        """Handshake MCP + guarda as capabilities anunciadas pelo backend."""
-        result = await self.send_request(
-            "initialize",
-            {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "mcp-gateway", "version": "0.1.0"},
-            },
-        )
-        if isinstance(result, dict):
-            self.capabilities = result.get("capabilities", {})
-        await self._send_notification("notifications/initialized")
 
     def _post_headers(self) -> dict[str, str]:
         """Headers obrigatórios do Streamable HTTP em cada POST."""

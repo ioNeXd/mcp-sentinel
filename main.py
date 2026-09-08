@@ -22,9 +22,15 @@ from gateway.server import McpServer
 from gateway.sessions import SessionFilter
 
 DEFAULT_PORT = 8080
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_CONFIG_PATH = "config/config.json"
 
 logger = structlog.get_logger("main")
+
+
+def _configured_host() -> str:
+    """Retorna o bind configurado, mantendo o default local seguro."""
+    return os.environ.get("MCP_GATEWAY_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
 
 
 def _install_sigbreak_handler(server: uvicorn.Server) -> None:
@@ -90,7 +96,7 @@ async def main() -> int:
     server = uvicorn.Server(
         uvicorn.Config(
             app,
-            host="127.0.0.1",
+            host=_configured_host(),
             port=port,
             log_level="warning",
             # Access log do uvicorn emite a URL COMPLETA da request (incluindo
