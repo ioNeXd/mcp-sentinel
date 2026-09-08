@@ -6,13 +6,10 @@ O resto cobre o protocolo da extensão, isolamento entre sessões, o erro
 "unknown tool" idêntico para tools bloqueadas e a expiração com clock fake.
 """
 
-import json
-
 import httpx
 import pytest
 
 from conftest import FakeClient, make_manager_for_clients
-from gateway.config import GatewayConfig
 from gateway.http_server import create_app
 from gateway.server import McpServer
 from gateway.sessions import SessionFilter

@@ -47,6 +47,8 @@ class StdioClient(BaseClient):
         """Sobe o processo, inicia os leitores e faz o handshake initialize."""
         if self._process is not None:
             return
+        if self._config.command is None:
+            raise BackendError(f"backend '{self._config.name}': comando não configurado")
         try:
             self._process = await asyncio.create_subprocess_exec(
                 self._config.command,

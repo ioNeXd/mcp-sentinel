@@ -11,7 +11,6 @@ import threading
 import time
 from typing import Any, AsyncIterator
 
-import fastapi
 import pytest
 import uvicorn
 from fastapi import FastAPI, Request

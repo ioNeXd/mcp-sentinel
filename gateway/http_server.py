@@ -102,6 +102,7 @@ def _render_dashboard(summary: dict[str, Any], servers: list[dict[str, Any]]) ->
         f"<li>{html.escape(str(key))}: {value}</li>"
         for key, value in backends_summary.items()
     )
+    rows_html = "\n".join(rows)
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -119,7 +120,7 @@ def _render_dashboard(summary: dict[str, Any], servers: list[dict[str, Any]]) ->
 <thead><tr><th>Nome</th><th>Tipo</th><th>Status</th><th>Tools</th><th>Resources</th>
 <th>Prompts</th><th>Falhas consecutivas</th><th>URL</th><th>Comando</th></tr></thead>
 <tbody>
-{"\n".join(rows)}
+{rows_html}
 </tbody>
 </table>
 <p><em>Read-only — ações de controle via API (ver README).</em></p>

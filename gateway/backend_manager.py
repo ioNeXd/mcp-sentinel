@@ -19,7 +19,7 @@ import structlog
 
 from gateway.clients.base import BaseClient
 from gateway.config import BackendConfig, BackendType, GatewayConfig
-from gateway.errors import BackendError, BackendJsonRpcError, BackendTimeoutError
+from gateway.errors import BackendError, BackendJsonRpcError
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 
 logger = structlog.get_logger(__name__)
@@ -465,26 +465,28 @@ class BackendManager:
             except asyncio.CancelledError:
                 pass
             self._restart_tasks.pop(backend_name, None)
-        if state.client is not None:
-            await state.client.stop()
-            state.client = None
-            self._unregister(backend_name)
-        state.status = BackendStatus.OFFLINE
-        state.consecutive_failures = 0
-        state.warn_disabled_logged = False
-        try:
-            await self._start_one(backend_name)
-        except BackendError as exc:
-            state.status = BackendStatus.OFFLINE  # volta pro ciclo normal do monitor
-            state.consecutive_failures = 1
-            logger.warning(
-                "backend_manual_restart_failed",
-                backend=backend_name,
-                error=str(exc),
-            )
-            raise BackendError(
-                f"backend '{backend_name}' não subiu no restart manual: {exc}"
-            ) from exc
+        async with self._restart_locks[backend_name]:
+            state = self._states[backend_name]
+            state.status = BackendStatus.RESTARTING
+            if state.client is not None:
+                await state.client.stop()
+                state.client = None
+                self._unregister(backend_name)
+            state.consecutive_failures = 0
+            state.warn_disabled_logged = False
+            try:
+                await self._start_one(backend_name)
+            except BackendError as exc:
+                state.status = BackendStatus.OFFLINE  # volta pro ciclo normal do monitor
+                state.consecutive_failures = 1
+                logger.warning(
+                    "backend_manual_restart_failed",
+                    backend=backend_name,
+                    error=str(exc),
+                )
+                raise BackendError(
+                    f"backend '{backend_name}' não subiu no restart manual: {exc}"
+                ) from exc
         logger.info("backend_restarted_manualmente", backend=backend_name)
 
     # ------------------------------------------------------------------
@@ -546,7 +548,8 @@ class BackendManager:
 
     def _backoff_seconds(self, consecutive_failures: int) -> float:
         """Backoff exponencial 1s → 2s → 4s → 8s → 16s com cap em 30s."""
-        delay = BASE_BACKOFF_SECONDS * BACKOFF_MULTIPLIER ** (consecutive_failures - 1)
+        failures = max(consecutive_failures, 1)
+        delay = BASE_BACKOFF_SECONDS * BACKOFF_MULTIPLIER ** (failures - 1)
         return min(delay, MAX_BACKOFF_SECONDS)
 
     def _unregister(self, backend_name: str) -> None:

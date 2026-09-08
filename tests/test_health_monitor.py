@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from conftest import FakeClient, make_fake_manager
+from conftest import make_fake_manager
 from gateway.backend_manager import BackendStatus
 from gateway.health_monitor import HealthMonitor
 

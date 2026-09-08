@@ -393,7 +393,7 @@ class McpServer:
 
     async def _call_backend(
         self,
-        request_id: int | str,
+        request_id: int | str | None,
         entry: RegistryEntry,
         method: str,
         params: dict[str, Any],

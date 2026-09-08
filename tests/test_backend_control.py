@@ -278,6 +278,37 @@ async def test_restart_manual_cancela_restart_pendente() -> None:
         await manager.stop_all()
 
 
+@pytest.mark.asyncio
+async def test_restart_manual_nao_dispara_restart_concorrente_do_monitor() -> None:
+    manager, factory = make_fake_manager(("backend-a",))
+    await manager.start_all()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_start_one = manager._start_one
+
+    async def slow_start_one(name: str) -> None:
+        entered.set()
+        await release.wait()
+        await original_start_one(name)
+
+    manager._start_one = slow_start_one  # type: ignore[method-assign]
+    restart_task = asyncio.create_task(manager.restart("backend-a"))
+    try:
+        await entered.wait()
+        assert manager.status_of("backend-a") is BackendStatus.RESTARTING
+        await manager.check_and_recover("backend-a")
+        release.set()
+        await restart_task
+        await asyncio.sleep(0)
+        assert len(factory.created) == 2
+        assert all(client.stopped for client in factory.created[:1])
+    finally:
+        release.set()
+        if not restart_task.done():
+            await restart_task
+        await manager.stop_all()
+
+
 # ----------------------------------------------------------------------
 # Observabilidade do estado disabled
 # ----------------------------------------------------------------------

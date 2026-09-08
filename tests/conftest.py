@@ -167,7 +167,6 @@ def spawn_fake_server_on_port(script: Path, port: int, *args: str) -> Any:
         stderr=subprocess.DEVNULL,
     )
     if not wait_for_port(port, process):
-        exit_code = process.poll()
         stop_fake_server(process)
         raise RuntimeError(f"fake server {script.name} não subiu na porta {port}")
     return process

@@ -1,7 +1,6 @@
 """Testes do HttpClient contra o fake_backend_http.py real (subprocesso)."""
 
 import json
-import sys
 
 import httpx
 import pytest

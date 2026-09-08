@@ -12,14 +12,15 @@ transporte está por trás.
 """
 
 import json
-from typing import Any, AsyncIterator
+from typing import Any
+from collections.abc import AsyncIterator
 
 import httpx
 import structlog
 
 from gateway.clients.base import PROTOCOL_VERSION, BaseClient
 from gateway.config import BackendConfig
-from gateway.errors import BackendDisconnectedError, BackendError, BackendTimeoutError, BackendJsonRpcError
+from gateway.errors import BackendDisconnectedError, BackendJsonRpcError, BackendTimeoutError
 from gateway.models import INTERNAL_ERROR
 
 logger = structlog.get_logger(__name__)
@@ -101,6 +102,7 @@ class HttpClient(BaseClient):
             )
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}
         try:
+            request_id = 1
             async with http.stream("POST", "", json=payload, headers=self._post_headers()) as response:
                 if response.status_code >= 400:
                     raise BackendDisconnectedError(
@@ -109,7 +111,7 @@ class HttpClient(BaseClient):
                 content_type = response.headers.get("content-type", "").lower()
                 if SSE_MEDIA_TYPE in content_type:
                     body = await self._read_sse_response(
-                        response.aiter_lines(), payload["id"], method
+                        response.aiter_lines(), request_id, method
                     )
                 else:
                     await response.aread()

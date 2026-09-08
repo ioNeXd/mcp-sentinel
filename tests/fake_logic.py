@@ -6,7 +6,6 @@ aqui para os três serem o MESMO backend por trás (valida agregação/roteament
 equivalentes entre transportes nos testes de integração).
 """
 
-import json
 import sys
 from typing import Any
 

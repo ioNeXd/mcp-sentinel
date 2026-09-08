@@ -282,6 +282,7 @@ def test_sequencia_de_backoff_exponencial() -> None:
     expected = [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
     actual = [manager._backoff_seconds(f) for f in range(1, 8)]
     assert actual == expected
+    assert manager._backoff_seconds(0) == 1.0
 
 
 @pytest.mark.asyncio
