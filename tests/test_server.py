@@ -1,6 +1,7 @@
 """Testes unitários do McpServer (clients fake, sem I/O)."""
 
 import pytest
+from gateway import __version__
 
 from conftest import FakeClient, make_manager_for_clients
 from gateway.models import (
@@ -187,6 +188,7 @@ async def test_initialize() -> None:
     )
     assert response is not None
     assert response["result"]["serverInfo"]["name"] == "mcp-gateway"
+    assert response["result"]["serverInfo"]["version"] == __version__
     assert response["result"]["capabilities"]["tools"]["listChanged"] is False
     # Fase 1: o Gateway também anuncia resources e prompts.
     assert "resources" in response["result"]["capabilities"]

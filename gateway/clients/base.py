@@ -7,10 +7,9 @@ from typing import Any
 import structlog
 
 from gateway.errors import BackendJsonRpcError
-from gateway.models import INTERNAL_ERROR, METHOD_NOT_FOUND
-from gateway.version import __version__
+from gateway import __version__
+from gateway.models import INTERNAL_ERROR, METHOD_NOT_FOUND, PROTOCOL_VERSION
 
-PROTOCOL_VERSION = "2024-11-05"
 JSON_CONTENT_TYPE = "application/json"
 SSE_MEDIA_TYPE = "text/event-stream"
 EVENT_DATA_PREFIX = "data:"

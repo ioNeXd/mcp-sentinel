@@ -29,6 +29,7 @@ from gateway.models import (
     INVALID_REQUEST,
     ITEM_NOT_FOUND,
     METHOD_NOT_FOUND,
+    PROTOCOL_VERSION,
     JsonRpcRequest,
     make_error,
     make_result,
@@ -36,11 +37,10 @@ from gateway.models import (
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 from gateway.registries.base import RegistryEntry
 from gateway.sessions import SESSION_HEADER, SessionFilter
-from gateway.version import __version__
+from gateway import __version__
 
 logger = structlog.get_logger(__name__)
 
-PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "mcp-gateway"
 SERVER_VERSION = __version__
 

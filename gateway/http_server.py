@@ -37,7 +37,7 @@ from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES
 from gateway.errors import BackendError
 from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_error
 from gateway.server import McpServer
-from gateway.version import __version__
+from gateway import __version__
 
 logger = structlog.get_logger(__name__)
 

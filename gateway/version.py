@@ -1,3 +1,5 @@
-"""Versão única exposta pelo Gateway e enviada no handshake MCP."""
+"""Compatibilidade para imports antigos da versão do Gateway."""
 
-__version__ = "0.5.0"
+from gateway import __version__
+
+__all__ = ["__version__"]
