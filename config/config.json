@@ -8,17 +8,25 @@
     {
       "name": "remoto",
       "type": "http",
-      "url": "http://127.0.0.1:9000",
-      "headers": { "Authorization": "Bearer token-do-backend" },
-      "request_timeout_seconds": 10
+      "url": "http://127.0.0.1:9000"
     },
     {
       "name": "eventos",
       "type": "sse",
       "url": "http://127.0.0.1:9001"
+    },
+    {
+      "name": "vscode",
+      "type": "sse",
+      "url": "http://127.0.0.1:6010/sse"
+    },
+    {
+      "name": "vscode-mcp",
+      "type": "http",
+      "url": "http://localhost:3000/mcp"
     }
   ],
-  "auth_token": null,
+  "auth_token": "meu-token-secreto-123",
   "max_payload_bytes": 10485760,
   "health_check_interval_seconds": 5,
   "auto_restart": true,
