@@ -215,50 +215,57 @@ async def test_restart_registra_tools_novas_sem_duplicar() -> None:
 async def test_falhas_repetidas_levam_ao_estado_failed_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Após max_restart_attempts, backend vira 'failed' e o monitor para de tentar."""
-    manager, _ = make_fake_manager(("backend-a",), max_restart_attempts=2)
+    """2.11 — max_restart_attempts = NÚMERO DE TENTATIVAS de restart.
+
+    Semântica documentada no README: com N, o Gateway tenta reiniciar EXATAMENTE
+    N vezes (contando as chamadas a client.start() dos restarts); só então o
+    backend vira 'failed' (terminal) e o monitor para de tentar.
+    """
+    manager, _ = make_fake_manager(("backend-a",), max_restart_attempts=3)
     zero_backoff(manager)
-    calls: list[int] = []
+    start_calls: list[int] = []
 
     def flaky_factory(backend_config: object) -> FakeClient:
-        calls.append(1)
         # Sobe só na primeira vez (start_all); todos os restarts falham.
-        return FakeClient(tools=[ECHO_TOOL], start_error=len(calls) > 1)
+        start_calls.append(1)
+        return FakeClient(tools=[ECHO_TOOL], start_error=len(start_calls) > 1)
 
     manager._create_client = flaky_factory  # type: ignore[method-assign]
     await manager.start_all()
     try:
         state = manager.get_state("backend-a")
         assert state.client is not None
+        assert len(start_calls) == 1  # startup
         await state.client.stop()  # derruba sem restart automático
         state.status = BackendStatus.OFFLINE
         state.client = None
         manager._unregister("backend-a")
+        # A detecção de queda (ramo `was_running` do check_and_recover)
+        # incrementaria o contador aqui (0 -> 1): o teardown manual pula esse
+        # ramo, então a simulação aplica o delta explicitamente.
+        state.consecutive_failures += 1
 
-        # Tentativa 1: falha (start_error) -> failures 0 -> 1.
-        await manager.check_and_recover("backend-a")
-        await drain_restarts(manager)
-        assert manager.status_of("backend-a") is BackendStatus.OFFLINE
-        assert state.consecutive_failures == 1
+        # Exatamente N tentativas de restart (chamadas a start() além do
+        # startup) acontecem antes do estado terminal.
+        for attempt in range(1, 4):  # tentativas 1, 2 e 3 (N = 3)
+            await manager.check_and_recover("backend-a")
+            await drain_restarts(manager)
+            assert manager.status_of("backend-a") is BackendStatus.OFFLINE
+            assert len(start_calls) == 1 + attempt
+        assert state.consecutive_failures == 4  # queda + 3 restarts falhos
 
-        # Tentativa 2 (a última permitida): falha -> failures 2.
-        await manager.check_and_recover("backend-a")
-        await drain_restarts(manager)
-        assert manager.status_of("backend-a") is BackendStatus.OFFLINE
-        assert state.consecutive_failures == 2
-
-        # Checagem seguinte: limite atingido -> failed (terminal), sem nova
+        # Checagem seguinte: limite esgotado -> failed (terminal), sem nova
         # tentativa de restart.
-        attempts_before = len(calls)
         await manager.check_and_recover("backend-a")
         await drain_restarts(manager)
         assert manager.status_of("backend-a") is BackendStatus.FAILED
+        assert len(start_calls) == 4  # nenhuma tentativa a mais
 
         # Ciclos seguintes NÃO tentam mais restart (nenhum client novo criado).
         for _ in range(3):
             await manager.check_and_recover("backend-a")
             await drain_restarts(manager)
-        assert len(calls) == attempts_before
+        assert len(start_calls) == 4
         assert manager.status_of("backend-a") is BackendStatus.FAILED
     finally:
         await manager.stop_all()
@@ -633,6 +640,129 @@ async def test_health_monitor_funciona_para_os_tres_tipos(
             stop_fake_server(respawned)
     finally:
         await monitor.stop()
+        await manager.stop_all()
+
+
+# ----------------------------------------------------------------------
+# Robustez do ciclo de vida (registro atômico, teardown resiliente, corridas)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_falho_no_start_nao_deixa_registro_nem_client_orfao() -> None:
+    """2.1 — falha no registro (item inválido): cleanup completo e erro claro.
+
+    O client sobe mas devolve uma tool com nome contendo '.' (rejeitada pelo
+    registry, Bloco 1): _start_one desfaz registros, para o client e propaga —
+    nenhum registry com entrada órfã, nenhuma conexão órfã, estado OFFLINE.
+    """
+    manager, _ = make_fake_manager(("backend-a",))
+    TOOL_INVALIDA = {
+        "name": "echo.v2",  # contém '.': rejeitada pelo ToolRegistry (1.3)
+        "description": "inválida",
+        "inputSchema": {"type": "object"},
+    }
+
+    def factory(backend_config: object) -> FakeClient:
+        client = FakeClient(tools=[TOOL_INVALIDA])
+        calls: list[bool] = []
+
+        async def tracked_stop() -> None:
+            calls.append(True)
+            await FakeClient.stop(client)  # type: ignore[arg-type]
+
+        client.stop = tracked_stop  # type: ignore[method-assign]
+        return client
+
+    manager._create_client = factory  # type: ignore[method-assign]
+    with pytest.raises(BackendError):
+        await manager._start_one("backend-a")
+    # Nenhum registro órfão em NENHUM dos três registries.
+    for registry in manager.registries:
+        assert registry.list_all() == []
+    state = manager.get_state("backend-a")
+    assert state is not None
+    assert state.client is None  # nunca ficou apontando para client órfão
+
+
+@pytest.mark.asyncio
+async def test_stop_all_continua_mesmo_com_client_que_falha_ao_parar() -> None:
+    """2.2 — stop() que estoura não impede o cleanup dos demais backends."""
+    manager, factory = make_fake_manager(("a", "b", "c"))
+    await manager.start_all()
+
+    async def broken_stop() -> None:
+        raise RuntimeError("falha simulada no stop")
+
+    factory.created[1].stop = broken_stop  # type: ignore[method-assign]
+    await manager.stop_all()  # não levanta
+    # Todos os backends passaram pelo cleanup completo (inclusive o "b").
+    for name in ("a", "b", "c"):
+        state = manager.get_state(name)
+        assert state is not None
+        assert state.client is None
+        assert state.status is BackendStatus.OFFLINE
+    for registry in manager.registries:
+        assert registry.list_all() == []
+
+
+@pytest.mark.asyncio
+async def test_disable_e_restart_concorrentes_resultam_em_disabled() -> None:
+    """2.7 — corrida real disable vs. restart manual: o final é sempre DISABLED.
+
+    O client fake tem start() com delay controlado: o restart entra no lock e
+    fica em _start_one; o disable chega DEPOIS, espera o lock (não sobrescreve
+    nada no meio) e ao final o estado é DISABLED, nunca RUNNING.
+    """
+    manager, _ = make_fake_manager(("backend-a",))
+    zero_backoff(manager)
+    await manager.start_all()
+    try:
+        original_start = FakeClient.start
+        release = asyncio.Event()
+        start_entered = asyncio.Event()
+
+        async def slow_start(self: FakeClient) -> None:
+            start_entered.set()
+            await release.wait()
+            await original_start(self)
+
+        # O delay precisa estar no client que o restart() vai CRIAR dentro de
+        # _start_one (o client atual, `created[0]`, é derrubado pelo teardown
+        # antes) — senão o start_entered nunca dispara.
+        def slow_factory(backend_config: object) -> FakeClient:
+            client = FakeClient()
+            client.start = lambda: slow_start(client)  # type: ignore[method-assign]
+            return client
+
+        manager._create_client = slow_factory  # type: ignore[method-assign]
+
+        restart_task = asyncio.create_task(manager.restart("backend-a"))
+        await start_entered.wait()  # restart está dentro do lock, em _start_one
+        disable_task = asyncio.create_task(manager.disable("backend-a"))
+        # Dá chance de o disable rodar até o ponto do lock.
+        await asyncio.sleep(0.05)
+        release.set()
+        await asyncio.gather(restart_task, disable_task)
+        assert manager.status_of("backend-a") is BackendStatus.DISABLED
+        assert manager.get_state("backend-a").client is None
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_restart_task_remove_a_propria_entrada_ao_terminar() -> None:
+    """2.8 — task de restart concluída sai de _restart_tasks (sem entrada morta)."""
+    manager, factory = make_fake_manager(("backend-a",))
+    zero_backoff(manager)
+    await manager.start_all()
+    try:
+        await factory.created[0].stop()
+        await manager.check_and_recover("backend-a")  # restart agendado
+        await drain_restarts(manager)
+        assert manager.status_of("backend-a") is BackendStatus.RUNNING
+        assert "backend-a" not in manager._restart_tasks
+    finally:
         await manager.stop_all()
 
 

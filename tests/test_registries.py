@@ -116,3 +116,85 @@ def test_registry_instancias_independentes() -> None:
     assert resources.list_all() == []
     assert resources.get("backend-a.echo") is None
     assert PromptRegistry().get("backend-a.echo") is None
+
+
+# ----------------------------------------------------------------------
+# Robustez do registro (duplicatas na leva, metadata imutável, identifiers)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
+def test_duplicado_na_mesma_leva_e_rejeitado(
+    registry_cls, item, namespaced, id_key
+) -> None:
+    """1.1 — dois itens da MESMA listagem com o mesmo id: erro, sem sobrescrever.
+
+    Diferente do re-registro entre levas (sobrescrita intencional), colisão
+    dentro da mesma leva é bug do backend e vira BackendError — o snapshot
+    anterior permanece intacto.
+    """
+    registry = registry_cls()
+    registry.register("backend-a", [item])
+    duplicado = dict(item)  # mesmo id, descrição diferente
+    duplicado["description"] = "outro item com o mesmo id"
+    with pytest.raises(BackendError, match="duplicado"):
+        registry.register("backend-a", [item, duplicado])
+    # O snapshot anterior NÃO foi corrompido pela leva rejeitada.
+    assert registry.get(namespaced) is not None
+    assert len(registry.list_all()) == 1
+
+
+@pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
+def test_metadata_e_copia_defensiva(registry_cls, item, namespaced, id_key) -> None:
+    """1.2 — mutar o dict original depois do registro não afeta o snapshot."""
+    import copy
+
+    registry = registry_cls()
+    original = copy.deepcopy(item)
+    # Campo aninhado (lista/dict) para provar que a cópia é profunda — preserva
+    # o inputSchema que o item já trouxer (TOOL_ITEM já tem um) ou cria um novo.
+    original["inputSchema"] = dict(original.get("inputSchema", {}), fields=["a"])
+    # Cópia PROFUNDA do estado no momento do registro: a cópia rasa
+    # compartilharia a lista 'fields' e também veria a mutação posterior.
+    schema_snapshot = copy.deepcopy(original["inputSchema"])
+    registry.register("backend-a", [original])
+    entry = registry.get(namespaced)
+    assert entry is not None
+    original["inputSchema"]["fields"].append("mutado-depois")
+    original[id_key] = "renomeado-depois"
+    # O snapshot já publicado não mudou com as mutações no dict original.
+    assert entry.metadata["inputSchema"] == schema_snapshot
+    assert entry.metadata[id_key] == item[id_key]
+
+
+@pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
+def test_identifier_com_ponto_e_rejeitado_para_nomes(
+    registry_cls, item, namespaced, id_key
+) -> None:
+    """1.3 — '.' é o delimitador do namespace: rejeitado em tools/prompts.
+
+    Para URIs de resources é permitido (exceção documentada: URIs contêm '.'
+    legitimamente e a reversão lá é por remoção de prefixo).
+    """
+    registry = registry_cls()
+    com_ponto = dict(item)
+    com_ponto[id_key] = item[id_key] + ".com.sufixo"
+    if registry_cls is ResourceRegistry:
+        # URI com '.' é válida (caso real: file:///tmp/a.txt).
+        registry.register("backend-a", [com_ponto])
+        assert registry.get(f"backend-a.{com_ponto[id_key]}") is not None
+    else:
+        with pytest.raises(BackendError, match="namespace"):
+            registry.register("backend-a", [com_ponto])
+
+
+@pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
+def test_identifier_com_espaco_e_rejeitado(
+    registry_cls, item, namespaced, id_key
+) -> None:
+    """1.3 — espaço em branco no identificador vira BackendError claro."""
+    registry = registry_cls()
+    com_espaco = dict(item)
+    com_espaco[id_key] = item[id_key] + " com espaço"
+    with pytest.raises(BackendError, match="espaço"):
+        registry.register("backend-a", [com_espaco])

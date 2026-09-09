@@ -198,6 +198,32 @@ async def test_enable_falhando_propaga_erro_e_deixa_offline() -> None:
         await manager.stop_all()
 
 
+@pytest.mark.asyncio
+async def test_enable_falha_inesperada_vira_backenderror_e_offline() -> None:
+    """2.4 — falha NÃO-BackendError no enable não vira 500 cru na rota.
+
+    Um bug real no start (RuntimeError, não modelado como BackendError) tem o
+    mesmo desfecho do caminho de erro conhecido: estado OFFLINE (volta ao
+    ciclo do monitor) e BackendError propagado com a causa original no
+    ``__cause__`` — a rota continua respondendo 503 estruturado.
+    """
+    manager, _ = make_fake_manager(("backend-a",))
+    await manager.start_all()
+    try:
+        await manager.disable("backend-a")
+
+        async def boom(name: str) -> None:
+            raise RuntimeError("bug inesperado no start")
+
+        manager._start_one = boom  # type: ignore[method-assign]
+        with pytest.raises(BackendError, match="não subiu após enable"):
+            await manager.enable("backend-a")
+        assert manager.status_of("backend-a") is BackendStatus.OFFLINE
+        assert manager.registries[0].list_all() == []
+    finally:
+        await manager.stop_all()
+
+
 # ----------------------------------------------------------------------
 # restart manual
 # ----------------------------------------------------------------------
@@ -252,6 +278,29 @@ async def test_restart_manual_falhando_propaga_erro() -> None:
         with pytest.raises(BackendError, match="não subiu no restart manual"):
             await manager.restart("backend-a")
         assert manager.status_of("backend-a") is BackendStatus.OFFLINE
+    finally:
+        await manager.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_restart_manual_falha_inesperada_vira_backenderror_e_offline() -> None:
+    """2.4 — falha NÃO-BackendError no restart não deixa o backend preso.
+
+    Sem esta correção, um RuntimeError vindo de _start_one escaparia do
+    `except BackendError` e o backend ficaria em RESTARTING para sempre.
+    O desfecho correto: OFFLINE (com registries limpos) + BackendError.
+    """
+    manager, _ = make_fake_manager(("backend-a",))
+    await manager.start_all()
+    try:
+        async def boom(name: str) -> None:
+            raise RuntimeError("bug inesperado no start")
+
+        manager._start_one = boom  # type: ignore[method-assign]
+        with pytest.raises(BackendError, match="não subiu no restart manual"):
+            await manager.restart("backend-a")
+        assert manager.status_of("backend-a") is BackendStatus.OFFLINE
+        assert manager.registries[0].list_all() == []
     finally:
         await manager.stop_all()
 

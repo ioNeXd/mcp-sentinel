@@ -138,6 +138,11 @@ async def test_stop_propaga_cancelamento_do_proprio_chamador(
     monitor.start()
     inner = monitor._task
     assert inner is not None
+    # 3.1 — o PRIMEIRO ciclo roda imediatamente ao entrar no loop. Deixa-o
+    # terminar ANTES do patch: a substituição do gather capturaria também as
+    # coroutines de check_all deste ciclo (criadas e nunca aguardadas), o que
+    # poluiria o teste com um RuntimeWarning de coroutine órfã.
+    await asyncio.sleep(0.05)
 
     gate = asyncio.Event()
     real_gather = asyncio.gather
@@ -158,6 +163,81 @@ async def test_stop_propaga_cancelamento_do_proprio_chamador(
         await stop_task
     assert monitor._task is None  # o estado interno foi limpo mesmo propagando
     assert inner.done() and inner.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_primeiro_ciclo_roda_imediatamente_ao_iniciar() -> None:
+    """3.1 — check_all acontece ANTES do primeiro sleep (detecção imediata)."""
+    manager, _ = make_fake_manager(("backend-a",))
+    cycles: list[int] = []
+    monitor = HealthMonitor(manager, interval_seconds=3600.0)  # intervalo enorme
+
+    async def counted_check_all() -> None:
+        cycles.append(1)
+
+    monitor.check_all = counted_check_all  # type: ignore[method-assign]
+    try:
+        monitor.start()
+        await asyncio.sleep(0.1)  # só o primeiro ciclo precisa rodar
+        assert cycles == [1]  # rodou na hora, sem esperar o intervalo
+    finally:
+        await monitor.stop()
+
+
+@pytest.mark.asyncio
+async def test_check_lento_nao_atrasa_os_demais_backends_no_ciclo() -> None:
+    """3.2 — checks concorrentes: backend lento não serializa o ciclo."""
+    manager, _ = make_fake_manager(("lento", "rapido"))
+    started: dict[str, float] = {}
+    finished: dict[str, float] = {}
+    loop = asyncio.get_running_loop()
+
+    async def check_with_delay(name: str) -> BackendStatus:
+        started[name] = loop.time()
+        if name == "lento":
+            await asyncio.sleep(0.3)
+        finished[name] = loop.time()
+        return manager.status_of(name)
+
+    manager.check_and_recover = check_with_delay  # type: ignore[method-assign]
+    monitor = HealthMonitor(manager, interval_seconds=3600.0)
+    await monitor.check_all()
+    # Os dois começaram praticamente juntos (não serializado).
+    assert abs(started["lento"] - started["rapido"]) < 0.15
+    # O rápido terminou sem esperar o lento (0.3s de delay).
+    assert finished["rapido"] - started["rapido"] < 0.15
+    # E o ciclo completo esperou só o lento (concorrência com teto).
+    assert finished["lento"] - started["lento"] >= 0.25
+
+
+@pytest.mark.asyncio
+async def test_cancelamento_no_meio_de_checks_lentos_nao_deixa_tasks_orfas() -> None:
+    """3.3 — stop() durante um ciclo com checks pendurados: cancelamento limpo.
+
+    O CancelledError externo propaga pelo gather como cancelamento do ciclo
+    (não vira 'erro inesperado' de backend) e nenhuma task fica órfã.
+    """
+    manager, _ = make_fake_manager(("a", "b", "c"))
+    slow_checks_running = asyncio.Event()
+    original = manager.check_and_recover
+
+    async def slow_check(name: str) -> BackendStatus:
+        slow_checks_running.set()
+        await asyncio.sleep(5.0)  # pendura o ciclo
+        return await original(name)
+
+    manager.check_and_recover = slow_check  # type: ignore[method-assign]
+    monitor = HealthMonitor(manager, interval_seconds=3600.0)
+    monitor.start()
+    task = monitor._task
+    assert task is not None
+    await slow_checks_running.wait()
+    await monitor.stop()  # cancela no meio do ciclo; não deve levantar
+    assert task.cancelled() or task.done()
+    # Nenhuma task órfã do monitor/ciclo sobrando.
+    await asyncio.sleep(0.05)
+    leftovers = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    assert leftovers == []
 
 
 @pytest.mark.asyncio
