@@ -58,6 +58,9 @@ CONNECT_TIMEOUT_SECONDS = 5.0
 READY_TIMEOUT_SECONDS = 10.0  # backend deve aceitar a conexão do stream neste prazo
 
 JSON_HEADERS = {"Content-Type": JSON_CONTENT_TYPE, "Accept": JSON_CONTENT_TYPE}
+# 4.1 — o GET do stream pede text/event-stream (não application/json, que era
+# o Accept herdado do JSON_HEADERS em todo request deste client).
+SSE_STREAM_HEADERS = {"Accept": SSE_MEDIA_TYPE}
 
 EVENT_ID_PREFIX = "id:"
 EVENT_NAME_PREFIX = "event:"
@@ -77,11 +80,11 @@ class SseClient(BaseClient):
     """Fala JSON-RPC com um backend MCP: POST para enviar, stream GET para receber."""
 
     def __init__(self, config: BackendConfig, request_timeout: float) -> None:
+        super().__init__()
         self._config = config
         self._request_timeout = request_timeout
         self._http: httpx.AsyncClient | None = None
         self._reader_task: asyncio.Task[None] | None = None
-        self._pending: dict[int | str, asyncio.Future[Any]] = {}
         self._next_id = 0
         self._connected = False
         self._stopped = False
@@ -117,9 +120,13 @@ class SseClient(BaseClient):
         self._stream_url = ""
         self._ready = asyncio.Event()
         self._start_error = None
+        # Sem headers default no AsyncClient: cada request declara os seus —
+        # o POST fala JSON (JSON_HEADERS) e o GET do stream pede SSE
+        # (SSE_STREAM_HEADERS, item 4.1). Headers custom do config valem para
+        # ambos (mesclados por cima dos defaults em cada caso).
         self._http = httpx.AsyncClient(
             base_url=self._config.url or "",
-            headers={**JSON_HEADERS, **self._config.headers},
+            headers=self._config.headers,
             timeout=httpx.Timeout(self._request_timeout, connect=CONNECT_TIMEOUT_SECONDS),
         )
         self._reader_task = asyncio.create_task(
@@ -190,9 +197,10 @@ class SseClient(BaseClient):
         future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         try:
-            await http.post(
+            response = await http.post(
                 self._post_url,
                 json={"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}},
+                headers=JSON_HEADERS,
             )
         except httpx.TimeoutException as exc:
             self._pending.pop(request_id, None)
@@ -208,6 +216,16 @@ class SseClient(BaseClient):
             raise BackendDisconnectedError(
                 f"backend '{self._config.name}': falha de rede no POST ({exc.__class__.__name__})"
             ) from exc
+        # 4.2 — POST respondido com 4xx/5xx: a resposta NUNCA vai chegar pelo
+        # stream; falha imediatamente (sem esperar o timeout completo) e remove
+        # o pending. O stream em si segue aberto (o backend pode aceitar os
+        # próximos POSTs).
+        if response.status_code >= 400:
+            self._pending.pop(request_id, None)
+            raise BackendDisconnectedError(
+                f"backend '{self._config.name}': HTTP {response.status_code}"
+                f" no POST de '{method}'"
+            )
         try:
             return await asyncio.wait_for(future, timeout=self._request_timeout)
         except asyncio.TimeoutError:
@@ -223,12 +241,27 @@ class SseClient(BaseClient):
         if self._stopped or http is None:
             return
         try:
-            await http.post(
-                self._post_url, json={"jsonrpc": "2.0", "method": method, "params": params or {}}
+            response = await http.post(
+                self._post_url,
+                json={"jsonrpc": "2.0", "method": method, "params": params or {}},
+                headers=JSON_HEADERS,
             )
         except httpx.HTTPError:
             logger.warning(
                 "sse_notification_falhou", backend=self._config.name, method=method
+            )
+            return
+        # 4.3 — httpx não levanta para 4xx/5xx: um erro HTTP do backend numa
+        # notificação é silenciosamente ignorado sem esta checagem. Notificação
+        # não tem retorno esperado pelo protocolo, então fica registrada em
+        # log (não impacta o estado de saúde — o ping do monitor detecta uma
+        # queda real logo em seguida).
+        if response.status_code >= 400:
+            logger.warning(
+                "sse_notification_falhou",
+                backend=self._config.name,
+                method=method,
+                status_code=response.status_code,
             )
 
     # ------------------------------------------------------------------
@@ -252,7 +285,9 @@ class SseClient(BaseClient):
             # ``base_url`` e ``GET /``, httpx substitui um path como ``/sse``
             # por ``/`` antes de o endpoint anunciado ser resolvido.
             stream_request_url = self._config.url or STREAM_PATH
-            async with http.stream("GET", stream_request_url) as response:
+            async with http.stream(
+                "GET", stream_request_url, headers=SSE_STREAM_HEADERS
+            ) as response:
                 content_type = response.headers.get("content-type", "")
                 if SSE_MEDIA_TYPE not in content_type:
                     self._set_start_error(
@@ -477,12 +512,3 @@ class SseClient(BaseClient):
         if self._start_error is None:
             self._start_error = exc
         self._ready.set()
-
-    def _fail_pending(self, exc: BackendError) -> None:
-        for future in self._pending.values():
-            if not future.done():
-                # Guarded: a request pode ter sido abandonada (ex.: wait_for
-                # externo desistiu) e ninguém vai recuperar a exceção — o
-                # callback interno a consome e suprime o aviso do asyncio.
-                set_exception_guarded(future, exc, backend=self._config.name)
-        self._pending.clear()
