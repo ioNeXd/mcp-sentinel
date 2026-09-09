@@ -69,7 +69,20 @@ class BaseClient(ABC):
     Implementações: :class:`gateway.clients.stdio_client.StdioClient` (Fase 0),
     :class:`gateway.clients.http_client.HttpClient` e
     :class:`gateway.clients.sse_client.SseClient` (Fase 3).
+
+    Estados compartilhados entre transportes:
+
+    - ``_pending``: futures de requests no aguardo de resposta, indexadas pelo
+      id JSON-RPC (clients com canal de leitura em background: stdio e sse);
+    - ``_capabilities``: capabilities anunciadas pelo backend no handshake
+      (inicializado aqui para NÃO ser um atributo mutável de classe — um dict
+      de classe seria compartilhado entre todas as instâncias até o primeiro
+      set do setter).
     """
+
+    def __init__(self) -> None:
+        self._pending: dict[int | str, asyncio.Future[Any]] = {}
+        self._capabilities: dict[str, Any] = {}
 
     @abstractmethod
     async def start(self) -> None:
@@ -153,7 +166,24 @@ class BaseClient(ABC):
     def capabilities(self, value: dict[str, Any]) -> None:
         self._capabilities = value
 
-    _capabilities: dict[str, Any] = {}
+    def _fail_pending(self, exc: Exception) -> None:
+        """Falha todos os requests pendentes e limpa ``_pending``.
+
+        Compartilhado pelos clients com leitura em background (stdio e sse):
+        chamado quando o canal de resposta cai ou o client é encerrado, para
+        que nenhum request fique pendurado até o timeout. Cada future recebe
+        a exceção via :func:`set_exception_guarded` — a request pode ter sido
+        abandonada (ex.: ``wait_for`` externo desistiu) e ninguém vai recuperar
+        a exceção; o callback interno a consome e suprime o aviso do asyncio.
+        """
+        for future in self._pending.values():
+            if not future.done():
+                set_exception_guarded(future, exc, backend=self._backend_name())
+        self._pending.clear()
+
+    def _backend_name(self) -> str:
+        """Nome do backend para logs (cada client guarda o próprio config)."""
+        return type(self).__name__
 
     async def list_tools(self) -> list[dict[str, Any]]:
         """Pede ``tools/list`` ao backend e devolve a lista de tools."""

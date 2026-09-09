@@ -27,15 +27,19 @@ class StdioClient(BaseClient):
     """
 
     def __init__(self, config: BackendConfig, request_timeout: float = 30.0) -> None:
+        super().__init__()
         self._config = config
         self._request_timeout = request_timeout
         self._process: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._stderr_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
-        self._pending: dict[int | str, asyncio.Future[Any]] = {}
         self._next_id = 0
         self._closed = False
+        # 6.2 — o leitor de stdout morreu por erro inesperado (não por término
+        # do processo): o client nunca mais processará respostas, então não
+        # pode mais aparentar saudável para o Health Monitor.
+        self._reader_failed = False
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -65,7 +69,15 @@ class StdioClient(BaseClient):
         self._stderr_task = asyncio.create_task(
             self._read_stderr(), name=f"stdio-stderr-{self._config.name}"
         )
-        await self._initialize()
+        # 6.1 — se o handshake falhar, processo e tasks de leitura seriam
+        # órfãos (processo vivo, tasks rodando) e uma tentativa futura de
+        # start() veria self._process setado e acharia que já está de pé.
+        # Mesmo padrão de HttpClient/SseClient: stop() e re-raise.
+        try:
+            await self._initialize()
+        except BaseException:
+            await self.stop()
+            raise
 
     async def stop(self) -> None:
         """Encerra o processo (stdin fechado, depois terminate/kill) e cancela as tasks."""
@@ -106,8 +118,17 @@ class StdioClient(BaseClient):
         morto" — o mais comum — é detectado imediatamente. Latência de request
         (backend vivo mas travado) é coberta pelo timeout do próprio
         ``send_request`` (que derruba o pending com ``BackendTimeoutError``).
+
+        Um erro inesperado na task de leitura do stdout (``_reader_failed``)
+        também invalida o client: o processo pode seguir tecnicamente vivo,
+        mas nenhuma resposta seria processada — aparentar saudável deixaria o
+        backend "zumbi" para o Health Monitor.
         """
-        return self._process is not None and self._process.returncode is None
+        return (
+            self._process is not None
+            and self._process.returncode is None
+            and not self._reader_failed
+        )
 
     async def send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Envia um request JSON-RPC e aguarda a resposta correlacionada por id."""
@@ -156,6 +177,10 @@ class StdioClient(BaseClient):
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Marca a falha ANTES de logar: is_alive() passa a devolver False e
+            # o Health Monitor detecta/reinicia o backend (que sem isso ficaria
+            # "zumbi" — processo vivo, respostas nunca processadas).
+            self._reader_failed = True
             logger.exception("erro inesperado lendo stdout do backend", backend=self._config.name)
         finally:
             self._fail_pending(
@@ -218,11 +243,3 @@ class StdioClient(BaseClient):
             raise
         except Exception:
             logger.exception("erro lendo stderr do backend", backend=self._config.name)
-
-    def _fail_pending(self, exc: Exception) -> None:
-        for future in self._pending.values():
-            if not future.done():
-                # Guarded: idem SseClient — request abandonada não pode virar
-                # "Future exception was never retrieved" no GC.
-                set_exception_guarded(future, exc, backend=self._config.name)
-        self._pending.clear()
