@@ -74,7 +74,7 @@ class BackendState:
     """
 
     name: str
-    config: Any  # BackendConfig (evita import circular na anotação)
+    config: BackendConfig
     status: BackendStatus = BackendStatus.OFFLINE
     client: BaseClient | None = None
     consecutive_failures: int = 0
@@ -226,11 +226,9 @@ class BackendManager:
         await asyncio.gather(*self._restart_tasks.values(), return_exceptions=True)
         self._restart_tasks.clear()
         for state in self._states.values():
-            if state.client is not None:
-                await state.client.stop()
-                state.client = None
-            state.status = BackendStatus.OFFLINE
-            self._unregister(state.name)
+            # 2.2 — falha ao parar um backend é capturada/logada pelo helper:
+            # o loop segue e TODO backend passa pelo cleanup completo.
+            await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
         logger.info("backend_manager_stopped", backends=len(self._states))
 
     # ------------------------------------------------------------------
@@ -270,12 +268,11 @@ class BackendManager:
                 backend=backend_name,
                 consecutive_failures=state.consecutive_failures + 1,
             )
-            state.status = BackendStatus.OFFLINE
+            # 2.3/2.6 — teardown resiliente: uma falha no stop() do client não
+            # deixa o registry nem a referência do client desatualizados com o
+            # novo status.
+            await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
             state.consecutive_failures += 1
-            if state.client is not None:
-                await state.client.stop()
-                state.client = None
-            self._unregister(backend_name)
         elif was_running:
             # Recuperação observável: backend que já esteve offline voltou a
             # responder. consecutive_failures > 0 indica que esteve degradado.
@@ -332,14 +329,29 @@ class BackendManager:
         )
 
     async def _restart_task(self, name: str) -> None:
-        """Wrapper que isola erros inesperados da task de restart."""
+        """Wrapper que isola erros inesperados da task de restart.
+
+        A política de falha de tentativa (contador, backoff, limite) vive toda
+        dentro de ``_attempt_restart``; este wrapper é só a rede de segurança
+        para bugs fora desse escopo e a limpeza da própria referência de task.
+        """
         try:
             await self._attempt_restart(self._states[name])
         except asyncio.CancelledError:
             raise
         except Exception:
+            # 2.5 — falha inesperada também conta para a política de backoff/
+            # limite de tentativas (mesmo efeito do caminho de BackendError).
             logger.exception("erro inesperado no restart do backend", backend=name)
-            self._states[name].status = BackendStatus.OFFLINE
+            state = self._states[name]
+            state.status = BackendStatus.OFFLINE
+            state.consecutive_failures += 1
+        finally:
+            # 2.8 — remove a própria entrada se ainda for a task atual daquele
+            # backend (uma task mais nova que já a substituiu não é tocada).
+            task = asyncio.current_task()
+            if task is not None and self._restart_tasks.get(name) is task:
+                self._restart_tasks.pop(name, None)
 
     async def _attempt_restart(self, state: BackendState) -> None:
         """Tenta reiniciar um backend offline, respeitando backoff e limite."""
@@ -347,7 +359,14 @@ class BackendManager:
             state = self._states[state.name]
             if state.status is not BackendStatus.OFFLINE:
                 return  # outro caminho já recuperou (ou falhou) este backend
-            if state.consecutive_failures >= self.config.max_restart_attempts:
+            # 2.11 — semântica documentada no README: max_restart_attempts é o
+            # NÚMERO DE TENTATIVAS de restart (não tentativas - 1). O corte usa
+            # '>' e não '>=': com consecutive_failures == N ainda há a N-ésima
+            # tentativa a fazer; só quando as falhas acumuladas (queda inicial
+            # + restarts falhos) EXCEDEM N o backend vira FAILED — ou seja,
+            # exatamente N tentativas de restart acontecem antes do estado
+            # terminal.
+            if state.consecutive_failures > self.config.max_restart_attempts:
                 state.status = BackendStatus.FAILED
                 self._log_terminal(state)
                 return
@@ -363,15 +382,27 @@ class BackendManager:
             state.last_restart_at = time.monotonic()
             try:
                 await self._start_one(state.name)
-            except BackendError as exc:
+            except Exception as exc:
+                # 2.5 — TODO tipo de falha na tentativa (BackendError ou não)
+                # passa pela mesma política: OFFLINE + incremento do contador,
+                # para que backoff e limite de tentativas continuem valendo
+                # também para falhas inesperadas.
                 state.status = BackendStatus.OFFLINE
                 state.consecutive_failures += 1
-                logger.warning(
-                    "backend_restart_failed",
-                    backend=state.name,
-                    attempt=state.consecutive_failures,
-                    error=str(exc),
-                )
+                if isinstance(exc, BackendError):
+                    logger.warning(
+                        "backend_restart_failed",
+                        backend=state.name,
+                        attempt=state.consecutive_failures,
+                        error=str(exc),
+                    )
+                else:
+                    logger.exception(
+                        "backend_restart_failed",
+                        backend=state.name,
+                        attempt=state.consecutive_failures,
+                        error=str(exc),
+                    )
             else:
                 logger.info("backend_recovered", backend=state.name)
 
@@ -402,12 +433,14 @@ class BackendManager:
             except asyncio.CancelledError:
                 pass
             self._restart_tasks.pop(backend_name, None)
-        if state.client is not None:
-            await state.client.stop()
-            state.client = None
-        self._unregister(backend_name)
-        state.status = BackendStatus.DISABLED
-        state.warn_disabled_logged = False
+        # 2.7 — mesmo lock de restart()/enable(): um restart manual em
+        # andamento (dentro do lock, em _start_one) não pode sobrescrever este
+        # disable ao terminar — o disable espera a seção crítica concluir e o
+        # estado final é sempre DISABLED, nunca RUNNING.
+        async with self._restart_locks[backend_name]:
+            # 2.6 — teardown resiliente (stop → limpar client → unregister → status).
+            await self._teardown_client(state, next_status=BackendStatus.DISABLED)
+            state.warn_disabled_logged = False
         logger.info("backend_disabled", backend=backend_name)
 
     async def enable(self, backend_name: str) -> None:
@@ -442,6 +475,16 @@ class BackendManager:
             raise BackendError(
                 f"backend '{backend_name}' não subiu após enable: {exc}"
             ) from exc
+        except Exception as exc:
+            # 2.4 — falha inesperada (não-BackendError): estado consistente
+            # (OFFLINE) e re-levantada como BackendError para a rota responder
+            # 503 estruturado em vez de 500 cru.
+            state.status = BackendStatus.OFFLINE
+            state.consecutive_failures = 1
+            logger.exception("backend_enable_failed", backend=backend_name, error=str(exc))
+            raise BackendError(
+                f"backend '{backend_name}' não subiu após enable: {exc}"
+            ) from exc
         logger.info("backend_enabled", backend=backend_name)
 
     async def restart(self, backend_name: str) -> None:
@@ -472,11 +515,8 @@ class BackendManager:
             self._restart_tasks.pop(backend_name, None)
         async with self._restart_locks[backend_name]:
             state = self._states[backend_name]
-            state.status = BackendStatus.RESTARTING
-            if state.client is not None:
-                await state.client.stop()
-                state.client = None
-                self._unregister(backend_name)
+            # 2.6 — teardown resiliente antes de subir o client novo.
+            await self._teardown_client(state, next_status=BackendStatus.RESTARTING)
             state.consecutive_failures = 0
             state.warn_disabled_logged = False
             try:
@@ -492,11 +532,46 @@ class BackendManager:
                 raise BackendError(
                     f"backend '{backend_name}' não subiu no restart manual: {exc}"
                 ) from exc
+            except Exception as exc:
+                # 2.4 — falha inesperada não pode deixar o backend preso em
+                # RESTARTING nem virar 500 cru na rota: mesmo desfecho do
+                # caminho de BackendError, com a causa original preservada.
+                state.status = BackendStatus.OFFLINE
+                state.consecutive_failures = 1
+                logger.exception(
+                    "backend_manual_restart_failed",
+                    backend=backend_name,
+                    error=str(exc),
+                )
+                raise BackendError(
+                    f"backend '{backend_name}' não subiu no restart manual: {exc}"
+                ) from exc
         logger.info("backend_restarted_manualmente", backend=backend_name)
 
     # ------------------------------------------------------------------
     # Internos
     # ------------------------------------------------------------------
+
+    async def _teardown_client(self, state: BackendState, *, next_status: BackendStatus) -> None:
+        """Para o client, limpa registros e aplica a transição de status (2.6).
+
+        Ordem fixa e resiliente: parar o client (falha aqui é capturada e
+        logada — nunca impede os passos seguintes), zerar a referência,
+        remover o backend dos registries e só então aplicar o novo status.
+        Usado por stop_all/disable/restart e pela detecção de offline — os
+        quatro pontos que repetiam a mesma sequência, cada um com seu próprio
+        ponto frágil (um stop() que estourasse deixava o estado interno
+        inconsistente com o registry e com a referência ao client).
+        """
+        client = state.client
+        if client is not None:
+            try:
+                await client.stop()
+            except Exception:
+                logger.exception("backend_stop_failed", backend=state.name)
+        state.client = None
+        self._unregister(state.name)
+        state.status = next_status
 
     async def _start_one(self, name: str) -> None:
         """Sobe o client do backend, faz handshake e registra nos registries."""
@@ -507,14 +582,21 @@ class BackendManager:
             tools = await client.list_tools()
             resources = await client.list_resources()
             prompts = await client.list_prompts()
+            # 2.1 — registro atômico: se qualquer register falhar (ex.: item
+            # duplicado/inválido vindo do backend), desfaz os já feitos nesta
+            # tentativa e para o client — nenhum registro órfão, nenhuma
+            # conexão/processo órfão, e o estado fica consistente para o
+            # chamador tratar como falha de start.
+            self.registries[0].register(name, tools)
+            self.registries[1].register(name, resources)
+            self.registries[2].register(name, prompts)
         except BaseException:
-            await client.stop()
+            self._unregister(name)
+            try:
+                await client.stop()
+            except Exception:
+                logger.exception("backend_stop_failed", backend=name)
             raise
-        # Padrão da Fase 1: register já substitui integralmente os itens do
-        # backend (sobrescrita sem sobras), num único swap do snapshot.
-        self.registries[0].register(name, tools)
-        self.registries[1].register(name, resources)
-        self.registries[2].register(name, prompts)
         state.client = client
         state.status = BackendStatus.RUNNING
         state.consecutive_failures = 0
