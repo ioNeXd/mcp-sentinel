@@ -21,7 +21,7 @@ há descoberta automática de portas.
 
 **Status atual: Fase 5 concluída** — filtro seletivo de backends por sessão
 (extensão `gateway/session/*`), controle manual de backends, dashboard e
-importador. Testes: **258/258 passando**. O `SseClient` segue o padrão
+importador. Testes: **279/279 passando**. O `SseClient` segue o padrão
 HTTP+SSE do MCP (evento `endpoint` com URL literal), validado contra
 servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
 `AGENT_INSTRUCTIONS.md` para as regras de conduta.
@@ -60,9 +60,13 @@ servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
   startup não derruba os demais (o Gateway só não sobe se TODOS falharem).
 - **Health Monitor** (`health_check_interval_seconds`, default 5s): verifica
   cada backend (transporte vivo + `ping` com timeout curto) e loga detecção de
-  queda, restart e recuperação — para stdio, http e sse.
-- **Auto-restart com backoff exponencial** (1s → 2s → 4s → ... cap 30s):
-  após `max_restart_attempts` tentativas consecutivas, o backend é marcado
+  queda, restart e recuperação — para stdio, http e sse. O primeiro ciclo roda
+  imediatamente no startup (queda inicial detectada sem esperar o primeiro
+  intervalo) e as verificações de cada ciclo rodam em paralelo com limite de
+  concorrência (`MAX_CONCURRENT_CHECKS`): um backend pendurado no tempo máximo
+  do ping não atrasa a detecção dos demais.
+- **Auto-restart com backoff exponencial** (1s → 2s → 4s → ... cap 30s): após
+  `max_restart_attempts` tentativas de restart falharem, o backend é marcado
   como `failed` (terminal, exige intervenção humana) e o monitor para de
   tentar. O restart roda em task própria por backend — não bloqueia o monitor
   nem os demais backends. Funciona para os três transportes: no stdio o
@@ -82,6 +86,23 @@ servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
   - `tools/list` / `tools/call`
   - `resources/list` / `resources/read`
   - `prompts/list` / `prompts/get`
+  - Robustez do registro: identificadores inválidos vindos do backend (vazios,
+    com espaço, ou com `.` — delimitador do namespace —, para tools/prompts) e
+    duplicados **dentro da mesma listagem** são rejeitados com `BackendError`
+    sem tocar o snapshot já publicado; URIs de resources são a exceção
+    documentada (contêm `.` legitimamente). A metadata de cada entrada é uma
+    cópia profunda (deepcopy): mutar o dict devolvido pelo client depois do
+    registro nunca afeta o snapshot publicado.
+- **Ciclo de vida à prova de falha** (`BackendManager`): o registro nos três
+  registries é atômico — se `tools`/`resources`/`prompts` não registram por
+  inteiro, os já feitos são desfeitos, o client é parado e o estado fica
+  consistente para o chamador tratar como falha de subida. Todo teardown
+  (stop/detection de offline/disable/restart) passa pelo mesmo helper
+  resiliente: parar o client (capturando e logando qualquer erro, sem impedir
+  o resto), limpar registries e só então aplicar o status — um `stop()`
+  estourado nunca deixa registry/referência desatualizados. `disable()` e
+  `restart()` manual compartilham lock: um disable que chega durante um
+  restart termina sempre `DISABLED`, nunca `RUNNING`.
 - Backend que não implementa resources/prompts é tratado como lista vazia
   (resposta `MethodNotFound` do backend vira ausência, não erro).
 - Endpoint único `POST /mcp` (FastAPI) com autenticação **Bearer opcional**.
@@ -169,9 +190,12 @@ Campos:
 - `auto_restart` — opcional (default `true`). Se `false`, backends detectados
   como offline permanecem offline até intervenção manual (reiniciar o
   Gateway).
-- `max_restart_attempts` — opcional (default `5`). Tentativas consecutivas de
-  restart antes de marcar o backend como `failed` (estado terminal; os ciclos
-  seguintes não tentam mais nada).
+- `max_restart_attempts` — opcional (default `5`). **Número de tentativas de
+  restart**: com `N`, o Gateway faz exatamente `N` tentativas de restart após
+  uma queda (a queda inicial não conta como tentativa) e, se a última falhar,
+  marca o backend como `failed` (estado terminal; os ciclos seguintes não
+  tentam mais nada — a recuperação exige `restart` manual ou reiniciar o
+  Gateway).
 - `backend_request_timeout_seconds` — opcional (default `30`). Timeout global
   de cada request a um backend; pode ser sobreposto por backend em
   `request_timeout_seconds`.
