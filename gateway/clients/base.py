@@ -48,7 +48,15 @@ def set_exception_guarded(future: asyncio.Future[Any], exc: Exception, *, backen
     "Future exception was never retrieved" pelo handler do asyncio — fora do
     structlog. O callback abaixo recupera a exceção (marcando-a como lida,
     o que suprime o aviso) e, em debug, registra o descarte via structlog.
+
+    Esta função é segura por si só: se a future já está done (incluindo
+    cancelada), retorna imediatamente sem chamar ``set_exception`` — o que
+    evitava ``asyncio.InvalidStateError`` caso um chamador invocasse sem
+    checar o estado da future previamente.
     """
+    if future.done():
+        return
+
     future.set_exception(exc)
 
     def _consume(done: asyncio.Future[Any]) -> None:

@@ -1,11 +1,15 @@
 """Configuração do Gateway: modelos Pydantic + loader do config.json."""
 
 import json
+import re
+import warnings
+from collections import Counter
 from enum import Enum
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
 DEFAULT_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB
 DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 5.0
@@ -58,6 +62,46 @@ class BackendConfig(BaseModel):
         default_factory=dict,
         description="Headers HTTP extras enviados a backends http/sse (ex.: auth do próprio backend).",
     )
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, v: str | None) -> str | None:
+        """Valida que a URL usa esquema http/https e tem host não-vazio."""
+        if v is None:
+            return v
+        try:
+            parsed = urlparse(v)
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(f"'url' não é uma URL válida: {exc}") from exc
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"'url' precisa começar com http:// ou https:// (recebeu scheme='{parsed.scheme}')"
+            )
+        if not parsed.netloc:
+            raise ValueError("'url' precisa ter um host não-vazio (ex.: http://127.0.0.1:9000)")
+        return v
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(cls, v: dict[str, str]) -> dict[str, str]:
+        """Valida nomes e valores de headers conforme RFC 7230.
+
+        Nomes devem ser tokens HTTP válidos; valores não podem conter
+        quebras de linha (\\r ou \\n) — prevenindo header injection.
+        """
+        # RFC 7230 token pattern: caracteres permitidos em header field-name
+        token_pattern = re.compile(r"^[!#$%&'*+\-.^_|~0-9A-Za-z]+$")
+        for name, value in v.items():
+            if not token_pattern.match(name):
+                raise ValueError(
+                    f"header '{name}': nome inválido (não é um token HTTP válido conforme RFC 7230)"
+                )
+            if "\r" in value or "\n" in value:
+                raise ValueError(
+                    f"header '{name}': valor não pode conter quebras de linha (\\r ou \\n)"
+                )
+        return v
+
     request_timeout_seconds: float | None = Field(
         default=None,
         gt=0,
@@ -87,6 +131,15 @@ class BackendConfig(BaseModel):
                 raise ValueError(
                     f"backend '{self.name}': 'command'/'args' só se aplicam a backends stdio"
                     " (use 'url')"
+                )
+            # 2.3 — aviso se args foi declarado explicitamente (provavelmente resquício
+            # de copiar/colar de um config stdio): não é erro, mas é suspeito.
+            if "args" in self.model_fields_set and self.args == []:
+                warnings.warn(
+                    f"backend '{self.name}': 'args' declarado explicitamente como lista vazia "
+                    f"num backend {self.type.value} (args só se aplica a stdio — provável "
+                    "resquício de config stdio copiado/colado)",
+                    stacklevel=2,
                 )
         return self
 
@@ -162,19 +215,36 @@ class GatewayConfig(BaseModel):
     def _validate(self) -> "GatewayConfig":
         if not self.backends:
             raise ValueError("config.json deve definir ao menos um backend")
-        names = [backend.name for backend in self.backends]
-        duplicates = sorted({name for name in names if names.count(name) > 1})
+        name_counts = Counter(backend.name for backend in self.backends)
+        duplicates = sorted(name for name, count in name_counts.items() if count > 1)
         if duplicates:
             raise ValueError(f"nomes de backends duplicados no config.json: {duplicates}")
         return self
 
 
 def load_config(path: Path) -> GatewayConfig:
-    """Carrega e valida o config.json, levantando ValueError com erro claro."""
+    """Carrega e valida o config.json, levantando ValueError com erro claro.
+
+    Captura toda falha de leitura/parse/validação e converta em ValueError,
+    para que o main.py (except ValueError) receba sempre mensagem legível.
+    """
     try:
         raw: Any = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ValueError(f"arquivo de configuração não encontrado: {path}") from exc
     except json.JSONDecodeError as exc:
-        raise ValueError(f"config.json inválido (JSON malformado): {exc}") from exc
-    return GatewayConfig.model_validate(raw)
+        raise ValueError(f"config.json inválido em {path} (JSON malformado): {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise ValueError(
+            f"config.json em {path} não é UTF-8 válido: {exc}"
+        ) from exc
+    except OSError as exc:
+        # Cobre erros de I/O não cobertos por FileNotFoundError (permissão
+        # negada, é um diretório, etc.).
+        raise ValueError(f"erro ao ler configuração em {path}: {exc}") from exc
+    try:
+        return GatewayConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(
+            f"config.json inválido em {path}: {exc}"
+        ) from exc

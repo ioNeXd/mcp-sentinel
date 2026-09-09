@@ -152,13 +152,15 @@ class StdioClient(BaseClient):
             ) from None
 
     async def _write(self, payload: dict[str, Any]) -> None:
-        if self._process is None or self._process.stdin is None:
+        if self._closed or self._process is None or self._process.stdin is None:
             raise BackendDisconnectedError(f"backend '{self._config.name}': stdin indisponível")
+        if hasattr(self._process.stdin, "is_closing") and self._process.stdin.is_closing():
+            raise BackendDisconnectedError(f"backend '{self._config.name}': stdin está fechando")
         async with self._write_lock:
             try:
                 self._process.stdin.write((json.dumps(payload) + "\n").encode("utf-8"))
                 await self._process.stdin.drain()
-            except (BrokenPipeError, ConnectionResetError, ProcessLookupError) as exc:
+            except (BrokenPipeError, ConnectionResetError, ProcessLookupError, RuntimeError) as exc:
                 raise BackendDisconnectedError(
                     f"backend '{self._config.name}': falha ao escrever no stdin ({exc})"
                 ) from exc
@@ -208,6 +210,14 @@ class StdioClient(BaseClient):
             return
         request_id = message.get("id")
         if request_id is not None and "method" not in message:
+            if message.get("jsonrpc") != "2.0":
+                logger.warning(
+                    "mensagem malformada sem jsonrpc 2.0 no stdout do backend",
+                    backend=self._config.name,
+                    id=request_id,
+                    jsonrpc=message.get("jsonrpc"),
+                )
+                return
             future = self._pending.pop(request_id, None)
             if future is None or future.done():
                 logger.warning(

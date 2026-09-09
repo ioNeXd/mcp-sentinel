@@ -29,6 +29,7 @@ from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,
     BackendError,
+    BackendHttpStatusError,
     BackendJsonRpcError,
     BackendTimeoutError,
 )
@@ -481,7 +482,13 @@ def _accept_probe_app(*, stream_path: str, messages_path: str) -> "FastAPI":
 
 @pytest.mark.asyncio
 async def test_post_com_erro_http_falha_imediatamente(sse_backend: str) -> None:
-    """4.2 — POST respondido 4xx/5xx: erro na hora, sem esperar o timeout."""
+    """4.2 — POST respondido 4xx/5xx: erro na hora, sem esperar o timeout.
+
+    Item 3 (91-120): o SSE client usa BackendHttpStatusError (subclasse de
+    BackendDisconnectedError) para diferenciar programaçaticamente 401/404/500
+    de falha de rede. O pytest.raises continua pegando BackendDisconnectedError
+    (compatibilidade), mas verificamos também o tipo específico e o status_code.
+    """
     url, server, thread = _start_inprocess_sse_server(
         _post_error_app(status_code=404, stream_path="/sse", messages_path="/message")
     )
@@ -490,10 +497,14 @@ async def test_post_com_erro_http_falha_imediatamente(sse_backend: str) -> None:
         await client.start()
         loop = asyncio.get_running_loop()
         started = loop.time()
-        with pytest.raises(BackendDisconnectedError, match="HTTP 404"):
+        with pytest.raises(BackendHttpStatusError, match="HTTP 404") as exc_info:
             await client.send_request("ping", {})
         elapsed = loop.time() - started
         assert elapsed < 2.0  # falhou imediatamente, não no timeout de 5s
+        # BackendHttpStatusError carrega o código HTTP acessível programaticamente.
+        assert exc_info.value.status_code == 404
+        # E continua sendo BackendDisconnectedError para quem trata pelo tipo genérico.
+        assert isinstance(exc_info.value, BackendDisconnectedError)
     finally:
         await client.stop()
         _stop_inprocess_sse_server(server, thread)

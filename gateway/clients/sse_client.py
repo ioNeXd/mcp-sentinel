@@ -49,6 +49,7 @@ from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,
     BackendError,
+    BackendHttpStatusError,
     BackendTimeoutError,
 )
 
@@ -222,9 +223,8 @@ class SseClient(BaseClient):
         # próximos POSTs).
         if response.status_code >= 400:
             self._pending.pop(request_id, None)
-            raise BackendDisconnectedError(
-                f"backend '{self._config.name}': HTTP {response.status_code}"
-                f" no POST de '{method}'"
+            raise BackendHttpStatusError(
+                response.status_code, method, backend=self._config.name
             )
         try:
             return await asyncio.wait_for(future, timeout=self._request_timeout)

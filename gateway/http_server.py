@@ -49,7 +49,7 @@ APP_VERSION = __version__
 
 # Header de sessão da extensão de filtro seletivo (Fase 5) — definido em
 # gateway.sessions e reexportado aqui para uso das rotas.
-from gateway.sessions import SESSION_HEADER  # noqa: E402
+from gateway.sessions import SESSION_HEADER, normalize_session_id  # noqa: E402
 
 
 # ----------------------------------------------------------------------
@@ -286,6 +286,14 @@ def create_app(
             await operation()
         except BackendError as exc:
             return _backend_error_response(exc)
+        except Exception as exc:
+            logger.exception(
+                "erro inesperado na rota de controle",
+                backend=name,
+                action=action,
+                error=str(exc),
+            )
+            return JSONResponse(status_code=500, content={"detail": "Internal error"})
         state = mcp_server.backend_manager.get_state(name)
         assert state is not None  # noqa: S101 — coro succeeded ⇒ backend existe
         return JSONResponse(
@@ -329,8 +337,12 @@ def create_app(
         if not _is_authorized(request):
             logger.info("http_auth_rejected", route="/api/tools/size")
             return _unauthorized()
+        # 1.3 — header cru é normalizado antes de medir/consultar a sessão
+        # (valor gigante/inválido vira "sem sessão", nunca chave de dict).
         return JSONResponse(
-            content=mcp_server.tools_list_size(request.headers.get(SESSION_HEADER))
+            content=mcp_server.tools_list_size(
+                normalize_session_id(request.headers.get(SESSION_HEADER))
+            )
         )
 
     # ------------------------------------------------------------------
@@ -421,7 +433,9 @@ def create_app(
 
         try:
             response = await mcp_server.process_message(
-                raw_body, session_id=request.headers.get(SESSION_HEADER)
+                raw_body,
+                # 1.3 — id do header é normalizado no mesmo ponto em que é lido.
+                session_id=normalize_session_id(request.headers.get(SESSION_HEADER)),
             )
         except Exception as exc:
             logger.exception("erro inesperado processando mensagem JSON-RPC", error=str(exc))

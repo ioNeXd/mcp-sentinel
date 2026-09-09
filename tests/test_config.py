@@ -104,3 +104,24 @@ def test_load_config_aceita_config_misto(tmp_path) -> None:
         BackendType.SSE,
     ]
     assert config.backends[2].headers["Authorization"] == "Bearer tok"
+
+
+def test_load_config_schema_invalido_levanta_value_error(tmp_path) -> None:
+    """JSON sintaticamente válido mas com backend stdio sem command → ValueError.
+
+    O pydantic.ValidationError deve ser convertido em ValueError (não vazar
+    cru), com mensagem legível contendo localização do campo.
+    """
+    config_file = tmp_path / "config.json"
+    config_file.write_text(
+        """
+{
+  "backends": [
+    {"name": "sem_cmd", "type": "stdio"}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="command"):
+        load_config(config_file)

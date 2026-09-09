@@ -55,10 +55,18 @@ def _install_sigbreak_handler(server: uvicorn.Server) -> None:
 async def main() -> int:
     """Sobe backends, health monitor e o HTTP; desliga tudo graciosamente."""
     configure_logging(logging.INFO)
+    port_raw = os.environ.get("MCP_GATEWAY_PORT", str(DEFAULT_PORT))
     try:
-        port = int(os.environ.get("MCP_GATEWAY_PORT", str(DEFAULT_PORT)))
+        port = int(port_raw)
     except ValueError:
-        logger.error("MCP_GATEWAY_PORT inválido", value=os.environ.get("MCP_GATEWAY_PORT"))
+        logger.error("MCP_GATEWAY_PORT inválido", value=port_raw)
+        return 1
+    # 3.2 — porta fora do intervalo válido falharia dentro do uvicorn com um
+    # erro obscuro; valida logo com mensagem clara e exit code consistente.
+    if not 1 <= port <= 65535:
+        logger.error(
+            "MCP_GATEWAY_PORT fora do intervalo válido (1-65535)", value=port_raw
+        )
         return 1
 
     config_path = Path(os.environ.get("MCP_GATEWAY_CONFIG", DEFAULT_CONFIG_PATH))
@@ -81,6 +89,15 @@ async def main() -> int:
         await mcp_server.start()
     except BackendError as exc:
         logger.error("falha ao iniciar os backends", error=str(exc))
+        return 1
+    except Exception:
+        # 3.3 — falha inesperada (bug real, não modelada como BackendError):
+        # nenhum processo/conexão de backend pode ficar órfão. O stop_all é
+        # tolerante a falha por backend (ver BackendManager._teardown_client);
+        # o cleanup roda ANTES do log para que o log final reflita o estado
+        # pós-cleanup. A exceção original segue no logger.exception abaixo.
+        await backend_manager.stop_all()
+        logger.exception("falha inesperada ao iniciar os backends")
         return 1
 
     health_monitor = HealthMonitor(

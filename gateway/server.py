@@ -37,7 +37,7 @@ from gateway.models import (
 )
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 from gateway.registries.base import RegistryEntry
-from gateway.sessions import SESSION_HEADER, SessionFilter
+from gateway.sessions import SESSION_HEADER, SessionFilter, normalize_session_id
 from gateway import __version__
 
 logger = structlog.get_logger(__name__)
@@ -109,7 +109,9 @@ class McpServer:
 
         ``session_id`` vem do header ``Mcp-Session-Id`` (ver SESSION_HEADER);
         sem header, ``None`` — e sem sessão não há filtro (comportamento
-        default, compatível com qualquer cliente MCP).
+        default, compatível com qualquer cliente MCP). Antes de qualquer uso, o
+        id é normalizado (1.3): acima do tamanho máximo ou fora do charset
+        permitido vira ``None`` ("sem sessão"), nunca chave crua de dict/log.
 
         Tabela de erros (documentada no README):
         - Envelope malformado/campos obrigatórios ausentes -> InvalidRequest (-32600)
@@ -121,6 +123,9 @@ class McpServer:
         - erros JSON-RPC vindos do backend são repassados com o código original.
         """
         started = time.perf_counter()
+        # 1.3 — id acima do tamanho máximo ou fora do charset vira None
+        # ("sem sessão"): o valor cru do header nunca vira chave de dict/log.
+        session_id = normalize_session_id(session_id)
         request_id = self._extract_id(raw_body)
         envelope_error = self._envelope_error(raw_body, request_id)
         if envelope_error is not None:

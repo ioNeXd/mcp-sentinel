@@ -13,6 +13,7 @@ from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,
     BackendError,
+    BackendHttpStatusError,
     BackendJsonRpcError,
     BackendTimeoutError,
 )
@@ -340,3 +341,50 @@ def test_headers_obrigatorios_vencem_config() -> None:
     assert headers["Content-Type"] == "application/json"
     assert headers["Accept"] == "application/json, text/event-stream"
     assert headers["X-Custom"] == "v"
+
+
+# ----------------------------------------------------------------------
+# Itens 91-120 — diferenciação de erro HTTP por status (Item 3)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_erro_http_status_levanta_backend_http_status_error() -> None:
+    """3 (91-120) — HTTP ≥ 400 levanta BackendHttpStatusError com status_code.
+
+    Antes da correção, todo erro HTTP ≥ 400 virava BackendDisconnectedError
+    genérico — a informação do código (401, 404, 500 ...) só estava na string.
+    Agora é uma subclasse com o código acessível programaticamente.
+    """
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, headers={"content-type": "application/json"})
+
+    client = _mock_client(handler)
+    try:
+        with pytest.raises(BackendHttpStatusError) as exc_info:
+            await client.send_request("ping")
+        # O código HTTP é acessível programaticamente (não só via string).
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.method == "ping"
+        assert client._config.name in str(exc_info.value)
+    finally:
+        await client.stop()
+
+
+def test_backend_http_status_error_eh_subclasse_de_backend_disconnected() -> None:
+    """3 (91-120) — BackendHttpStatusError é subclasse de BackendDisconnectedError.
+
+    Garante compatibilidade: código que trata BackendDisconnectedError continua
+    funcionando (catch no server.py / BackendManager), enquanto código novo
+    pode fazer isinstance(exc, BackendHttpStatusError) para diferenciar
+    401/403 (config) de falha de rede.
+    """
+    exc = BackendHttpStatusError(500, "tools/list", backend="test-backend")
+    assert isinstance(exc, BackendDisconnectedError)
+    assert isinstance(exc, BackendError)
+    assert exc.status_code == 500
+    assert exc.method == "tools/list"
+    assert exc.backend == "test-backend"
+    # A mensagem inclui código e método, mas também funciona como string.
+    assert "500" in str(exc)
+    assert "tools/list" in str(exc)

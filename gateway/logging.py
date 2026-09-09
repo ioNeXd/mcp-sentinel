@@ -12,13 +12,18 @@ import logging
 import structlog
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(level: int = logging.INFO, force: bool = True) -> None:
     """Configura structlog (contextvars + nível) e o logging stdlib base.
 
     O renderer ConsoleRenderer formata eventos legíveis no terminal local.
     Os logs de bibliotecas (uvicorn etc.) seguem pelo logging stdlib.
+
+    ``force`` é repassado a ``logging.basicConfig``: por padrão ``True`` (uso
+    standalone do Gateway), mas quem embotar o pacote como biblioteca pode
+    passar ``force=False`` para não destruir uma configuração de logging
+    já existente no processo hospedeiro.
     """
-    logging.basicConfig(level=level, format="%(message)s", force=True)
+    logging.basicConfig(level=level, format="%(message)s", force=force)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

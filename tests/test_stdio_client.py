@@ -1,11 +1,12 @@
 """Testes do StdioClient contra o fake_backend.py real (subprocesso)."""
 
 import asyncio
+import json
 import sys
 
 import pytest
 
-from conftest import FAKE_BACKEND_PATH
+from conftest import FAKE_BACKEND_PATH, capture_structlog_events
 from gateway.clients.base import BackendListResponseError, BaseClient
 from gateway.clients.stdio_client import StdioClient
 from gateway.config import BackendConfig
@@ -262,5 +263,78 @@ async def test_reader_task_marcada_como_falha_em_erro_real() -> None:
         if reader_task.exception() is not None:
             assert client._reader_failed  # noqa: SLF001
             assert not client.is_alive()
+    finally:
+        await client.stop()
+
+
+# ----------------------------------------------------------------------
+# Robustez adicional (itens 91-120)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_write_levanta_quando_client_encerrado() -> None:
+    """1 (91-120) — _write checa _closed proativamente, não apenas no send_request.
+
+    Antes da correção, _write só verificava process/stdin — não _closed nem
+    is_closing(). _send_notification (que chama _write direto) não tinha a
+    checagem defensiva de send_request, então tentava escrever num stdin já
+    fechado. Agora _write levanta cedo.
+    """
+    client = make_client()
+    await client.start()
+    await client.stop()
+    # Após stop(), _closed=True e stdin fechado — _write não deve tentar I/O.
+    with pytest.raises(BackendDisconnectedError, match="stdin indisponível"):
+        await client._write({"jsonrpc": "2.0", "method": "ping"})  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_send_notification_levanta_quando_client_encerrado() -> None:
+    """1 (91-120) — _send_notification delega a _write, que checa _closed.
+
+    Confirma o caminho proativo: não tenta escrever notificação num client já
+    encerrado. (Antes, só send_request checava _closed; _send_notification não.)
+    """
+    client = make_client()
+    await client.start()
+    await client.stop()
+    with pytest.raises(BackendDisconnectedError, match="stdin indisponível"):
+        await client._send_notification("notifications/initialized")  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_handle_message_rejeita_jsonrpc_invalido() -> None:
+    """2 (91-120) — _handle_message valida jsonrpc antes de correlacionar.
+
+    Uma mensagem com id mas sem jsonrpc 2.0 não é uma resposta válida do
+    protocolo: deve ser logada como aviso e ignorada, sem tocar o pending
+    (sem setar resultado nem exceção em nenhuma future).
+    """
+    client = make_client()
+    await client.start()
+    try:
+        # Mensagens que NÃO vêm do JSON-RPC real do protocolo: têm id mas
+        # jsonrpc ausente ou errado.
+        malformed_lines = [
+            json.dumps({"id": 1, "result": {}}).encode(),  # sem jsonrpc
+            json.dumps({"jsonrpc": "1.0", "id": 2, "result": {}}).encode(),  # jsonrpc errado
+            json.dumps({"jsonrpc": None, "id": 3, "result": {}}).encode(),  # jsonrpc null
+        ]
+        # pending vazio: se a mensagem fosse mal processada, _pending.pop
+        # retornaria None (sem crash) mas a future não deveria ser tocada.
+        # O importante é que NENHUM aviso de "resposta inesperada" seja
+        # emitido — o aviso correto é "mensagem malformada sem jsonrpc 2.0".
+        with capture_structlog_events() as events:
+            for line in malformed_lines:
+                await client._handle_message(line)  # noqa: SLF001
+        malformed_events = [
+            e for e in events if e["event"] == "mensagem malformada sem jsonrpc 2.0 no stdout do backend"
+        ]
+        assert len(malformed_events) == 3, (
+            f"esperado 3 avisos de jsonrpc inválido, got {len(malformed_events)}"
+        )
+        # Nenhum pending foi tocado (dicionário continua vazio).
+        assert client._pending == {}  # noqa: SLF001
     finally:
         await client.stop()

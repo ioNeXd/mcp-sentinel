@@ -27,7 +27,7 @@ from gateway.clients.base import (
     backend_jsonrpc_error,
 )
 from gateway.config import BackendConfig
-from gateway.errors import BackendDisconnectedError, BackendTimeoutError
+from gateway.errors import BackendDisconnectedError, BackendHttpStatusError, BackendTimeoutError
 
 logger = structlog.get_logger(__name__)
 
@@ -112,8 +112,8 @@ class HttpClient(BaseClient):
                 "POST", "", json=payload, headers=self._post_headers()
             ) as response:
                 if response.status_code >= 400:
-                    raise BackendDisconnectedError(
-                        f"backend '{self._config.name}': HTTP {response.status_code} em '{method}'"
+                    raise BackendHttpStatusError(
+                        response.status_code, method, backend=self._config.name
                     )
                 content_type = response.headers.get("content-type", "").lower()
                 media_type = content_type.split(";", 1)[0].strip()
