@@ -27,3 +27,10 @@ class ResourceRegistry(BaseRegistry):
     """
 
     _IDENTIFIER_KEY = "uri"
+
+    # URIs contêm '.' legitimamente (ex.: file:///tmp/a.txt) — a regra de
+    # rejeição do delimitador vale só para tools/prompts. A reversão do
+    # namespace aqui é por remoção do prefixo 'backend.' (nomes de backend
+    # não contêm pontos, então a separação é inequívoca — ver docstring do
+    # módulo), não por split no primeiro ponto.
+    _ALLOW_NAMESPACE_SEPARATOR = True

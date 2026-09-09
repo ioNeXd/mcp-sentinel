@@ -9,6 +9,7 @@ padrão que a Fase 2 reaproveita para recarregar registries na troca de um
 backend sem travar requisições em andamento.
 """
 
+import copy
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -24,7 +25,9 @@ class RegistryEntry:
         name: Identificador original do item no backend (nome de tool,
             URI de resource ou nome de prompt).
         namespaced: Identificador exposto pelo Gateway.
-        metadata: Dict original completo enviado pelo backend.
+        metadata: Cópia defensiva (deepcopy) do dict enviado pelo backend —
+            o registry não compartilha referência com o chamador, então
+            mutações no dict original nunca afetam um snapshot já publicado.
     """
 
     backend: str
@@ -42,6 +45,12 @@ class BaseRegistry:
 
     _IDENTIFIER_KEY: ClassVar[str] = "name"
 
+    # 1.3 — '.' é o delimitador do namespace ``backend.<id>``: identificadores
+    # de tools/prompts que o contenham tornariam o nome namespaced ambíguo.
+    # URIs de resources são a exceção documentada (ver ResourceRegistry):
+    # contêm '.' legitimamente e a reversão lá é por remoção do prefixo.
+    _ALLOW_NAMESPACE_SEPARATOR: ClassVar[bool] = False
+
     def __init__(self) -> None:
         self._items: dict[str, RegistryEntry] = {}
 
@@ -49,16 +58,27 @@ class BaseRegistry:
         """(Re)registra os itens de um backend num único swap do snapshot.
 
         Substitui integralmente os itens que já existiam daquele backend
-        (sobrescrita sem sobras). Levanta BackendError se algum item for
-        inválido — nesse caso o snapshot anterior permanece intacto.
+        (sobrescrita sem sobras — re-registro intencional do mesmo backend).
+        Levanta BackendError se algum item for inválido ou se dois itens da
+        MESMA listagem resolverem para o mesmo identificador namespaced
+        (colisão dentro da leva — diferente da sobrescrita entre levas, que
+        é o mecanismo normal de atualização). Em qualquer falha, o snapshot
+        anterior permanece intacto: o swap só acontece no fim, sem exceções.
         """
         new_items = {
             namespaced: entry
             for namespaced, entry in self._items.items()
             if entry.backend != backend_name
         }
+        seen: set[str] = set()
         for item in items:
             entry = self._build_entry(backend_name, item)
+            if entry.namespaced in seen:
+                raise BackendError(
+                    f"backend '{backend_name}': identificador duplicado na mesma"
+                    f" listagem: '{entry.name}' (namespaced '{entry.namespaced}')"
+                )
+            seen.add(entry.namespaced)
             new_items[entry.namespaced] = entry
         self._items = new_items
 
@@ -89,9 +109,33 @@ class BaseRegistry:
                 f" (string não vazia): {item!r}"
             )
         name = item[self._IDENTIFIER_KEY]
+        self._validate_identifier(backend_name, name)
         return RegistryEntry(
             backend=backend_name,
             name=name,
             namespaced=f"{backend_name}.{name}",
-            metadata=item,
+            # Cópia profunda: payloads têm listas/dicts aninhados (inputSchema,
+            # arguments etc.) e uma referência compartilhada permitiria que o
+            # dono do dict original mutasse um snapshot já publicado.
+            metadata=copy.deepcopy(item),
         )
+
+    def _validate_identifier(self, backend_name: str, identifier: str) -> None:
+        """Valida o identificador original vindo do backend (1.3).
+
+        Regras de domínio: sem espaço em branco (o nome vira parte de um
+        identificador exposto; backend_name tem a mesma regra documentada no
+        README) e, para tools/prompts, sem '.' — o delimitador do próprio
+        esquema de namespace ``backend.<id>``.
+        """
+        if any(ch.isspace() for ch in identifier):
+            raise BackendError(
+                f"backend '{backend_name}': identificador inválido"
+                f" ({self._IDENTIFIER_KEY} não pode conter espaço): {identifier!r}"
+            )
+        if "." in identifier and not self._ALLOW_NAMESPACE_SEPARATOR:
+            raise BackendError(
+                f"backend '{backend_name}': identificador inválido"
+                f" ({self._IDENTIFIER_KEY} não pode conter '.', delimitador do"
+                f" namespace): {identifier!r}"
+            )
