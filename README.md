@@ -21,7 +21,7 @@ há descoberta automática de portas.
 
 **Status atual: Fase 5 concluída** — filtro seletivo de backends por sessão
 (extensão `gateway/session/*`), controle manual de backends, dashboard e
-importador. Testes: **217/217 passando**. O `SseClient` segue o padrão
+importador. Testes: **258/258 passando**. O `SseClient` segue o padrão
 HTTP+SSE do MCP (evento `endpoint` com URL literal), validado contra
 servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
 `AGENT_INSTRUCTIONS.md` para as regras de conduta.
@@ -38,7 +38,24 @@ servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
   correspondente. A compatibilidade foi validada com testes de protocolo para
   `initialize`, `tools/list` e `tools/call`; a validação manual contra um
   servidor MCP HTTP real de terceiro depende de esse servidor estar disponível.
-- Handshake `initialize` com cada backend e registro de capabilities.
+  Robustez do transporte (clients http/sse/stdio): ids JSON-RPC únicos por
+  request com correlação request→resposta validada em ambos os caminhos do
+  `HttpClient` (JSON direto e SSE); envelope `jsonrpc: "2.0"` da resposta
+  validado; Content-Type de resposta fora de JSON/SSE vira erro de transporte
+  imediato (com o tipo recebido na mensagem); POST respondido com 4xx/5xx
+  falha na hora (sem esperar o timeout) no `SseClient` e é registrado em log
+  nas notificações (http e sse); o GET do stream SSE envia
+  `Accept: text/event-stream` (o POST segue com JSON); headers obrigatórios do
+  transporte Streamable HTTP vencem Content-Type/Accept custom do config
+  (decisão deliberada, documentada no código); `StdioClient` faz cleanup de
+  processo/tasks se o handshake falhar (nenhum órfão) e um erro inesperado no
+  leitor de stdout invalida o client (`is_alive() → False`) para o Health
+  Monitor detectar e reiniciar; `_fail_pending` e `_capabilities` vivem na
+  `BaseClient` (sem duplicação e sem atributo mutável de classe).
+- Handshake `initialize` com cada backend e registro de capabilities. A
+  resposta do backend é validada (`protocolVersion` suportado + `capabilities`
+  objeto) antes de o backend ser considerado pronto; respostas de listagem
+  malformadas viram erro de domínio (não lista vazia silenciosa).
 - **`BackendManager`** dono do ciclo de vida: um backend que falha ao subir no
   startup não derruba os demais (o Gateway só não sobe se TODOS falharem).
 - **Health Monitor** (`health_check_interval_seconds`, default 5s): verifica
