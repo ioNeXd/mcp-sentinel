@@ -408,3 +408,154 @@ async def test_endpoint_url_absoluta_usada_literalmente() -> None:
             await client.stop()
     finally:
         _stop_inprocess_sse_server(server, thread)
+
+
+# ----------------------------------------------------------------------
+# Robustez de transporte (headers por request, status do POST, notificação)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_do_stream_pede_sse_e_post_pede_json(sse_backend: str) -> None:
+    """4.1 — GET do stream pede text/event-stream; POST fala application/json.
+
+    O fake devolve os headers do último POST em /last-headers (mesma rota do
+    fake HTTP); o Accept do GET do stream é verificado via app in-process.
+    """
+    url, server, thread = _start_inprocess_sse_server(
+        _accept_probe_app(stream_path="/sse", messages_path="/message")
+    )
+    try:
+        client = make_client(url + "/sse")
+        await client.start()
+        try:
+            assert await client.send_request("ping", {}) == {}
+        finally:
+            await client.stop()
+        assert _ACCEPTS["stream"] == "text/event-stream"
+        assert _ACCEPTS["post"] == "application/json"
+    finally:
+        _stop_inprocess_sse_server(server, thread)
+
+
+_ACCEPTS: dict[str, str] = {}
+
+
+def _accept_probe_app(*, stream_path: str, messages_path: str) -> "FastAPI":
+    """App SSE que registra o Accept do GET do stream e do POST."""
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    queues: list[asyncio.Queue[str]] = []
+
+    @app.get(stream_path)
+    async def sse(request: Request) -> StreamingResponse:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        queues.append(queue)
+        _ACCEPTS["stream"] = request.headers.get("accept", "")
+
+        async def gen() -> AsyncIterator[str]:
+            try:
+                yield f"event: endpoint\ndata: {messages_path}?sid=1\n\n"
+                while True:
+                    try:
+                        data = await asyncio.wait_for(queue.get(), timeout=0.2)
+                        yield f"data: {data}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+            finally:
+                queues.remove(queue)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.post(messages_path)
+    async def messages(request: Request) -> JSONResponse:
+        _ACCEPTS["post"] = request.headers.get("accept", "")
+        body: Any = await request.json()
+        if fake_logic.is_notification(body):
+            return JSONResponse(content={"received": True})
+        for queue in queues:
+            queue.put_nowait(json.dumps(fake_logic.build_response(body)))
+        return JSONResponse(content={"received": True})
+
+    return app
+
+
+@pytest.mark.asyncio
+async def test_post_com_erro_http_falha_imediatamente(sse_backend: str) -> None:
+    """4.2 — POST respondido 4xx/5xx: erro na hora, sem esperar o timeout."""
+    url, server, thread = _start_inprocess_sse_server(
+        _post_error_app(status_code=404, stream_path="/sse", messages_path="/message")
+    )
+    try:
+        client = make_client(url + "/sse", timeout=5.0)
+        await client.start()
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        with pytest.raises(BackendDisconnectedError, match="HTTP 404"):
+            await client.send_request("ping", {})
+        elapsed = loop.time() - started
+        assert elapsed < 2.0  # falhou imediatamente, não no timeout de 5s
+    finally:
+        await client.stop()
+        _stop_inprocess_sse_server(server, thread)
+
+
+def _post_error_app(
+    *, status_code: int, stream_path: str, messages_path: str
+) -> "FastAPI":
+    """App SSE que responde erro HTTP a todo POST exceto o handshake initialize.
+
+    O initialize precisa ser respondido (pelo stream) para o start() do client
+    completar; os DEMAIS métodos recebem o status de erro — é o cenário de
+    backend que aceita a conexão mas rejeita requests/notificações com 4xx/5xx.
+    """
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    queues: list[asyncio.Queue[str]] = []
+
+    @app.get(stream_path)
+    async def sse() -> StreamingResponse:
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        queues.append(queue)
+
+        async def gen() -> AsyncIterator[str]:
+            try:
+                yield f"event: endpoint\ndata: {messages_path}?sid=1\n\n"
+                while True:
+                    try:
+                        data = await asyncio.wait_for(queue.get(), timeout=0.2)
+                        yield f"data: {data}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+            finally:
+                queues.remove(queue)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.post(messages_path)
+    async def messages(request: Request) -> JSONResponse:
+        body: Any = await request.json()
+        if body.get("method") == "initialize":
+            for queue in queues:
+                queue.put_nowait(json.dumps(fake_logic.build_response(body)))
+            return JSONResponse(content={"received": True})
+        return JSONResponse(status_code=status_code, content={"detail": "erro"})
+
+    return app
+
+
+@pytest.mark.asyncio
+async def test_notificacao_com_erro_http_é_logada(sse_backend: str) -> None:
+    """4.3 — POST de notificação respondido 4xx/5xx é registrado, não ignorado."""
+    url, server, thread = _start_inprocess_sse_server(
+        _post_error_app(status_code=500, stream_path="/sse", messages_path="/message")
+    )
+    try:
+        client = make_client(url + "/sse")
+        await client.start()
+        with capture_structlog_events() as events:
+            await client._send_notification("notifications/initialized")  # noqa: SLF001
+        warnings = [e for e in events if e["event"] == "sse_notification_falhou"]
+        assert warnings, "notificação com erro HTTP deveria ser logada"
+        assert warnings[0].get("status_code") == 500
+    finally:
+        await client.stop()
+        _stop_inprocess_sse_server(server, thread)
