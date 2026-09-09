@@ -635,20 +635,30 @@ curl -s -X POST http://127.0.0.1:8080/mcp -H 'Content-Type: application/json' \
 | JSON malformado | `-32700` ParseError | HTTP `400` |
 | Envelope inválido / campo obrigatório ausente (`jsonrpc`/`method`) ou `id` inválido | `-32600` InvalidRequest | `200` com corpo de erro |
 | Method desconhecido | `-32601` MethodNotFound | `200` com corpo de erro |
-| Parâmetro inválido de método conhecido (ex.: `tools/call` sem `name`) | `-32602` InvalidParams | `200` com corpo de erro |
+| Parâmetro inválido de método conhecido (ex.: `tools/call` sem `name`, `initialize` incompatível ou `params` não-objeto) | `-32602` InvalidParams | `200` com corpo de erro |
 | Tool/resource/prompt namespaced inexistente | `-32001` (custom) | `200` com corpo de erro |
 | Backend indisponível/processo morto durante a chamada | `-32002` (custom) | `200` com corpo de erro |
 | Backend remoto fora do ar / stream SSE caído | `-32002` (custom) | `200` com corpo de erro |
 | Erros JSON-RPC vindos do backend | código original do backend | repassado |
 
-Validações de transporte (Content-Type errado → `415`; payload acima do limite
-→ `413`; auth falha → `401`) respondem com HTTP status próprio e corpo JSON
-descritivo — nunca um 500 genérico.
+Validações de transporte (Content-Type diferente de `application/json` →
+`415`; parâmetros opcionais como `charset` são aceitos; payload acima do
+limite → `413`; auth falha → `401`) respondem com HTTP status próprio e corpo
+JSON descritivo — nunca um 500 genérico. O limite é verificado primeiro pelo
+`Content-Length`, quando disponível, e também durante o streaming de corpos
+chunked, antes de acumular dados além do limite.
 
 Nota: ausência de campo no *envelope* retorna `InvalidRequest` (-32600), não
 `InvalidParams` (-32602) — pelo spec do JSON-RPC 2.0, um Request sem
 `method`/`jsonrpc` é um Request inválido; `InvalidParams` fica reservado para
 parâmetros inválidos de um método conhecido.
+
+O Gateway negocia `protocolVersion` durante `initialize` usando o conjunto de
+versões MCP suportadas (atualmente `2024-11-05`). O payload precisa conter
+`protocolVersion` (string), `capabilities` (objeto) e `clientInfo` com
+`name`/`version` (strings). Entradas de tools, resources ou prompts com
+metadata estruturalmente inválida são omitidas da listagem e registradas em
+log de aviso, sem derrubar o Gateway.
 
 ## Testes
 

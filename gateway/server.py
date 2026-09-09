@@ -29,7 +29,8 @@ from gateway.models import (
     INVALID_REQUEST,
     ITEM_NOT_FOUND,
     METHOD_NOT_FOUND,
-    PROTOCOL_VERSION,
+    negotiate_protocol_version,
+    PROTOCOL_VERSION,  # noqa: F401 - compatibility export
     JsonRpcRequest,
     make_error,
     make_result,
@@ -130,9 +131,11 @@ class McpServer:
         except ValidationError as exc:
             # Envelope nominalmente presente, mas com tipo inválido em algum campo.
             logger.warning("jsonrpc_invalid_request", id=request_id, reason=str(exc))
-            return make_error(request_id, INVALID_REQUEST, "Invalid Request", data=str(exc))
-        if request.id is None:
-            return None  # notificação: o protocolo não exige resposta
+            return make_error(request_id, INVALID_REQUEST, "Invalid Request")
+        if request.id_present is False:
+            return None  # notificação: campo id ausente
+        # Se id está presente (mesmo que None/null explícito), deve responder
+        # A resposta já inclui id: None automaticamente pelo make_result/make_error
         logger.info(
             "jsonrpc_request_received", method=request.method, id=request.id, session_id=session_id
         )
@@ -162,10 +165,36 @@ class McpServer:
         self, request: JsonRpcRequest, session_id: str | None = None
     ) -> dict[str, Any] | None:
         if request.method == "initialize":
+            params = request.params
+            if not isinstance(params, dict):
+                return make_error(request.id, INVALID_PARAMS, "Invalid Params: params deve ser objeto")
+            protocol_version = params.get("protocolVersion")
+            capabilities = params.get("capabilities")
+            client_info = params.get("clientInfo")
+            # protocolVersion obrigatório e string
+            if not isinstance(protocol_version, str) or not protocol_version:
+                return make_error(request.id, INVALID_PARAMS, "Invalid Params: protocolVersion obrigatório (string)")
+            # capabilities deve ser objeto
+            if not isinstance(capabilities, dict):
+                return make_error(request.id, INVALID_PARAMS, "Invalid Params: capabilities obrigatório (objeto)")
+            # clientInfo deve ser objeto com name/version
+            if not isinstance(client_info, dict):
+                return make_error(request.id, INVALID_PARAMS, "Invalid Params: clientInfo obrigatório (objeto)")
+            if (
+                not isinstance(client_info.get("name"), str)
+                or not client_info["name"]
+                or not isinstance(client_info.get("version"), str)
+                or not client_info["version"]
+            ):
+                return make_error(request.id, INVALID_PARAMS, "Invalid Params: clientInfo.name e clientInfo.version obrigatórios (strings)")
+            # 1.1 — negociação de versão
+            negotiated = negotiate_protocol_version(protocol_version)
+            if negotiated is None:
+                return make_error(request.id, INVALID_PARAMS, f"Invalid Params: versão de protocolo não suportada: {protocol_version}")
             return make_result(
                 request.id,
                 {
-                    "protocolVersion": PROTOCOL_VERSION,
+                    "protocolVersion": negotiated,
                     "capabilities": {
                         "tools": {"listChanged": False},
                         "resources": {"subscribe": False, "listChanged": False},
@@ -187,8 +216,9 @@ class McpServer:
                 request.id,
                 {
                     "tools": [
-                        self._tool_payload(entry)
+                        payload
                         for entry in self._visible(self._tools.list_all(), session_id)
+                        if (payload := self._tool_payload(entry)) is not None
                     ]
                 },
             )
@@ -197,8 +227,9 @@ class McpServer:
                 request.id,
                 {
                     "resources": [
-                        self._resource_payload(entry)
+                        payload
                         for entry in self._visible(self._resources.list_all(), session_id)
+                        if (payload := self._resource_payload(entry)) is not None
                     ]
                 },
             )
@@ -207,8 +238,9 @@ class McpServer:
                 request.id,
                 {
                     "prompts": [
-                        self._prompt_payload(entry)
+                        payload
                         for entry in self._visible(self._prompts.list_all(), session_id)
+                        if (payload := self._prompt_payload(entry)) is not None
                     ]
                 },
             )
@@ -258,7 +290,11 @@ class McpServer:
                 INVALID_REQUEST,
                 f"Invalid Request: extensão de sessão exige o header {SESSION_HEADER}",
             )
-        params = request.params if isinstance(request.params, dict) else {}
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
         raw = params.get("backends")
         if (
             not isinstance(raw, list)
@@ -310,7 +346,11 @@ class McpServer:
     async def _handle_tools_call(
         self, request: JsonRpcRequest, session_id: str | None = None
     ) -> dict[str, Any]:
-        params = request.params if isinstance(request.params, dict) else {}
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
         tool_name = params.get("name")
         if not isinstance(tool_name, str) or not tool_name:
             return make_error(request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório")
@@ -338,7 +378,11 @@ class McpServer:
     async def _handle_resource_read(
         self, request: JsonRpcRequest, session_id: str | None = None
     ) -> dict[str, Any]:
-        params = request.params if isinstance(request.params, dict) else {}
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
         uri = params.get("uri")
         if not isinstance(uri, str) or not uri:
             return make_error(request.id, INVALID_PARAMS, "Invalid params: 'uri' (string) é obrigatório")
@@ -368,7 +412,11 @@ class McpServer:
     async def _handle_prompt_get(
         self, request: JsonRpcRequest, session_id: str | None = None
     ) -> dict[str, Any]:
-        params = request.params if isinstance(request.params, dict) else {}
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
         prompt_name = params.get("name")
         if not isinstance(prompt_name, str) or not prompt_name:
             return make_error(request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório")
@@ -424,7 +472,7 @@ class McpServer:
                 "backend_unavailable", backend=entry.backend, method=method, error=str(exc)
             )
             return make_error(
-                request_id, BACKEND_UNAVAILABLE, f"Backend '{entry.backend}' indisponível: {exc}"
+                request_id, BACKEND_UNAVAILABLE, f"Backend '{entry.backend}' indisponível"
             )
         return make_result(request_id, result)
 
@@ -441,7 +489,11 @@ class McpServer:
         config específico (ver GET /api/tools/size no README).
         """
         entries = self._visible(self._tools.list_all(), session_id)
-        payloads = [self._tool_payload(entry) for entry in entries]
+        payloads = [
+            payload
+            for entry in entries
+            if (payload := self._tool_payload(entry)) is not None
+        ]
         serialized = json.dumps({"tools": payloads}, ensure_ascii=False)
         per_backend: dict[str, int] = {}
         for entry, payload in zip(entries, payloads):
@@ -466,6 +518,15 @@ class McpServer:
         return candidate if isinstance(candidate, (int, str)) else None
 
     @staticmethod
+    def _require_object_params(request: JsonRpcRequest) -> dict[str, Any] | None:
+        """Retorna ``params`` como objeto; ausência equivale a objeto vazio."""
+        if request.params is None:
+            return {}
+        if isinstance(request.params, dict):
+            return request.params
+        return None
+
+    @staticmethod
     def _envelope_error(raw_body: dict[str, Any], request_id: int | str | None) -> str | None:
         """Devolve mensagem de erro do envelope JSON-RPC, ou None se válido."""
         if raw_body.get("id") is not None and request_id is None:
@@ -478,19 +539,43 @@ class McpServer:
         return None
 
     @staticmethod
-    def _tool_payload(entry: RegistryEntry) -> dict[str, Any]:
+    def _tool_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        if not isinstance(entry.metadata.get("description"), str):
+            logger.warning(
+                "backend_item_omitido",
+                kind="tool",
+                item=entry.namespaced,
+                reason="description inválida",
+            )
+            return None
         payload = dict(entry.metadata)
         payload["name"] = entry.namespaced
         return payload
 
     @staticmethod
-    def _resource_payload(entry: RegistryEntry) -> dict[str, Any]:
+    def _resource_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:
+            logger.warning(
+                "backend_item_omitido",
+                kind="resource",
+                item=entry.namespaced,
+                reason="name inválido",
+            )
+            return None
         payload = dict(entry.metadata)
         payload["uri"] = entry.namespaced
         return payload
 
     @staticmethod
-    def _prompt_payload(entry: RegistryEntry) -> dict[str, Any]:
+    def _prompt_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:
+            logger.warning(
+                "backend_item_omitido",
+                kind="prompt",
+                item=entry.namespaced,
+                reason="name inválido",
+            )
+            return None
         payload = dict(entry.metadata)
         payload["name"] = entry.namespaced
         return payload

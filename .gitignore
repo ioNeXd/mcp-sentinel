@@ -40,5 +40,8 @@ desktop.ini
 # Roadmap (documento plano — mantido no README.md)
 ROADMAP.md
 
+# Instruções para agentes (documento plano — mantido no README.md)
+AGENT_INSTRUCTIONS.md
+
 # Freebuff (workspace local, não faz parte do projeto)
 .freebuff/

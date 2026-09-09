@@ -183,7 +183,11 @@ async def test_initialize() -> None:
             "jsonrpc": "2.0",
             "id": 7,
             "method": "initialize",
-            "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {}},
+            "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0"},
+            },
         }
     )
     assert response is not None
@@ -193,6 +197,115 @@ async def test_initialize() -> None:
     # Fase 1: o Gateway também anuncia resources e prompts.
     assert "resources" in response["result"]["capabilities"]
     assert "prompts" in response["result"]["capabilities"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [
+        {},
+        {"protocolVersion": "2024-11-05", "capabilities": {}},
+        {
+            "protocolVersion": "2024-11-05",
+            "capabilities": [],
+            "clientInfo": {"name": "client", "version": "1"},
+        },
+        {
+            "protocolVersion": "unsupported",
+            "capabilities": {},
+            "clientInfo": {"name": "client", "version": "1"},
+        },
+    ],
+)
+async def test_initialize_rejeita_payload_ou_versao_invalida(
+    params: dict[str, object],
+) -> None:
+    server, _, _ = await make_server()
+    response = await server.process_message(
+        {"jsonrpc": "2.0", "id": 70, "method": "initialize", "params": params}
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_notification_id_null_e_id_normal_recebem_resposta() -> None:
+    server, _, _ = await make_server()
+
+    notification = await server.process_message(
+        {"jsonrpc": "2.0", "method": "ping"}
+    )
+    null_id = await server.process_message(
+        {"jsonrpc": "2.0", "id": None, "method": "ping"}
+    )
+    regular_id = await server.process_message(
+        {"jsonrpc": "2.0", "id": 71, "method": "ping"}
+    )
+
+    assert notification is None
+    assert null_id == {"jsonrpc": "2.0", "id": None, "result": {}}
+    assert regular_id is not None
+    assert regular_id["id"] == 71
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["tools/call", "resources/read", "prompts/get"])
+async def test_handlers_rejeitam_params_que_nao_sao_objeto(method: str) -> None:
+    server, _, _ = await make_server()
+    response = await server.process_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 72,
+            "method": method,
+            "params": [1, 2, 3],
+        }
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_set_active_backends_rejeita_params_que_nao_sao_objeto() -> None:
+    server, _, _ = await make_server()
+    response = await server.process_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 73,
+            "method": "gateway/session/set_active_backends",
+            "params": [1],
+        },
+        session_id="session",
+    )
+
+    assert response is not None
+    assert response["error"]["code"] == INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_listagem_omite_metadata_invalida_sem_derrupar_gateway() -> None:
+    server, _, _ = await make_server(
+        client_a=FakeClient(
+            tools=[{"name": "missing-description"}],
+            resources=[{"uri": "memory://missing-name"}],
+            prompts=[{"name": "valid-prompt"}],
+        )
+    )
+
+    tools = await server.process_message(
+        {"jsonrpc": "2.0", "id": 74, "method": "tools/list"}
+    )
+    resources = await server.process_message(
+        {"jsonrpc": "2.0", "id": 75, "method": "resources/list"}
+    )
+    prompts = await server.process_message(
+        {"jsonrpc": "2.0", "id": 76, "method": "prompts/list"}
+    )
+
+    assert tools is not None and tools["result"]["tools"] == [{"name": "backend-b.add", "description": "Soma.", "inputSchema": {"type": "object", "properties": {}}}]
+    assert resources is not None and resources["result"]["resources"] == []
+    assert prompts is not None and [item["name"] for item in prompts["result"]["prompts"]] == ["backend-a.valid-prompt"]
 
 
 @pytest.mark.asyncio

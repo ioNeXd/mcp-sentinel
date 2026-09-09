@@ -5,6 +5,7 @@ import sys
 import pytest
 
 from conftest import FAKE_BACKEND_PATH
+from gateway.clients.base import BackendListResponseError, BaseClient
 from gateway.clients.stdio_client import StdioClient
 from gateway.config import BackendConfig
 from gateway.errors import (
@@ -27,6 +28,19 @@ def make_client(
         args=args if args is not None else [str(FAKE_BACKEND_PATH)],
     )
     return StdioClient(config, request_timeout=timeout)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [None, {}, {"tools": None}, {"tools": {}}],
+)
+def test_extract_list_rejeita_resposta_malformada(result) -> None:
+    with pytest.raises(BackendListResponseError):
+        BaseClient._extract_list(result, "tools")
+
+
+def test_extract_list_preserva_lista_vazia_valida() -> None:
+    assert BaseClient._extract_list({"tools": []}, "tools") == []
 
 
 @pytest.mark.asyncio

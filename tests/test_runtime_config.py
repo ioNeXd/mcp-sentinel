@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from gateway.config import BackendConfig, GatewayConfig
 from gateway import __version__
 from gateway.clients.base import BaseClient, PROTOCOL_VERSION as CLIENT_PROTOCOL_VERSION
+from gateway.errors import BackendError
 from gateway.http_server import APP_VERSION
 from gateway.models import PROTOCOL_VERSION
 from gateway.server import SERVER_VERSION, PROTOCOL_VERSION as SERVER_PROTOCOL_VERSION
@@ -37,7 +38,10 @@ async def test_handshake_do_client_anuncia_versao_do_app() -> None:
 
         async def send_request(self, method: str, params=None):
             self.request = {"method": method, "params": params}
-            return {"capabilities": {}}
+            return {
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+            }
 
     client = CaptureClient()
     await client._initialize()
@@ -45,6 +49,31 @@ async def test_handshake_do_client_anuncia_versao_do_app() -> None:
     params = client.request["params"]
     assert isinstance(params, dict)
     assert params["clientInfo"] == {"name": "mcp-gateway", "version": __version__}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        {},
+        {"protocolVersion": PROTOCOL_VERSION},
+        {"protocolVersion": PROTOCOL_VERSION, "capabilities": []},
+        {"protocolVersion": "unsupported", "capabilities": {}},
+    ],
+)
+async def test_handshake_rejeita_resposta_invalida_do_backend(result) -> None:
+    class InvalidResponseClient(BaseClient):
+        async def start(self) -> None:
+            return None
+
+        async def stop(self) -> None:
+            return None
+
+        async def send_request(self, method: str, params=None):
+            return result
+
+    with pytest.raises(BackendError):
+        await InvalidResponseClient()._initialize()
 
 
 def test_host_padrao_local_e_override_por_ambiente(monkeypatch) -> None:

@@ -144,6 +144,31 @@ async def test_content_type_invalido() -> None:
 
 
 @pytest.mark.asyncio
+async def test_content_type_exige_match_exato_e_aceita_charset() -> None:
+    server = await make_app_with_fakes()
+    try:
+        app = create_app(server)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            invalid = await client.post(
+                "/mcp",
+                content="{}",
+                headers={"content-type": "not-application/json-anything"},
+            )
+            valid = await client.post(
+                "/mcp",
+                content='{"jsonrpc":"2.0","id":1,"method":"ping"}',
+                headers={"content-type": "application/json; charset=utf-8"},
+            )
+        assert invalid.status_code == 415
+        assert valid.status_code == 200
+        assert valid.json()["id"] == 1
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
 async def test_body_nao_dict_retorna_invalid_request() -> None:
     server = await make_app_with_fakes()
     try:
@@ -224,6 +249,56 @@ async def test_payload_grande_demais_retorna_413() -> None:
             )
         assert resp.status_code == 413
     finally:
+        await server.stop()
+
+
+class _ChunkedBody(httpx.AsyncByteStream):
+    async def __aiter__(self):
+        yield b'{"jsonrpc":"2.0","id":1,"method":"'
+        yield b'ping"}'
+
+
+@pytest.mark.asyncio
+async def test_payload_chunked_excede_limite_durante_stream() -> None:
+    server = await make_app_with_fakes()
+    try:
+        app = create_app(server, max_payload_bytes=10)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            resp = await client.post(
+                "/mcp",
+                content=_ChunkedBody(),
+                headers={"content-type": "application/json"},
+            )
+        assert resp.status_code == 413
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_erro_interno_nao_vaza_detalhes_para_cliente() -> None:
+    server = await make_app_with_fakes()
+    original = server.process_message
+
+    async def fail_process_message(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("segredo interno")
+
+    server.process_message = fail_process_message  # type: ignore[method-assign]
+    try:
+        app = create_app(server)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
+            resp = await client.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["error"]["message"] == "Internal error"
+        assert "segredo interno" not in resp.text
+    finally:
+        server.process_message = original  # type: ignore[method-assign]
         await server.stop()
 
 

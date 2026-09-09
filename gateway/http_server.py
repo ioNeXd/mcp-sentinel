@@ -355,15 +355,44 @@ def create_app(
 
         # 2. Content-Type.
         content_type = request.headers.get("content-type", "")
-        if "application/json" not in content_type.lower():
+        media_type = content_type.split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
             return JSONResponse(
                 status_code=415,
                 content={"detail": "Content-Type deve ser application/json"},
             )
 
         # 3. Tamanho do payload (limite vindo do config).
-        body = await request.body()
-        if len(body) > max_payload_bytes:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = None
+            if declared_length is not None and declared_length > max_payload_bytes:
+                logger.warning("http_payload_too_large", max_bytes=max_payload_bytes)
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": f"Payload excede o limite de {max_payload_bytes} bytes"
+                    },
+                )
+
+        body_parts: list[bytes] = []
+        body_size = 0
+        async for chunk in request.stream():
+            body_size += len(chunk)
+            if body_size > max_payload_bytes:
+                logger.warning("http_payload_too_large", max_bytes=max_payload_bytes)
+                return JSONResponse(
+                    status_code=413,
+                    content={
+                        "detail": f"Payload excede o limite de {max_payload_bytes} bytes"
+                    },
+                )
+            body_parts.append(chunk)
+        body = b"".join(body_parts)
+        if body_size > max_payload_bytes:
             logger.warning("http_payload_too_large", max_bytes=max_payload_bytes)
             return JSONResponse(
                 status_code=413,
@@ -395,10 +424,10 @@ def create_app(
                 raw_body, session_id=request.headers.get(SESSION_HEADER)
             )
         except Exception as exc:
-            logger.exception("erro inesperado processando mensagem JSON-RPC")
+            logger.exception("erro inesperado processando mensagem JSON-RPC", error=str(exc))
             return JSONResponse(
                 status_code=200,
-                content=make_error(None, INTERNAL_ERROR, f"Internal error: {exc}"),
+                content=make_error(None, INTERNAL_ERROR, "Internal error"),
             )
         if response is None:
             return Response(status_code=202)  # notificação: sem corpo

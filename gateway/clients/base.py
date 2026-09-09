@@ -6,9 +6,14 @@ from typing import Any
 
 import structlog
 
-from gateway.errors import BackendJsonRpcError
+from gateway.errors import BackendError, BackendJsonRpcError
 from gateway import __version__
-from gateway.models import INTERNAL_ERROR, METHOD_NOT_FOUND, PROTOCOL_VERSION
+from gateway.models import (
+    INTERNAL_ERROR,
+    METHOD_NOT_FOUND,
+    PROTOCOL_VERSION,
+    is_supported_protocol_version,
+)
 
 JSON_CONTENT_TYPE = "application/json"
 SSE_MEDIA_TYPE = "text/event-stream"
@@ -16,6 +21,10 @@ EVENT_DATA_PREFIX = "data:"
 COMMENT_PREFIX = ":"
 
 logger = structlog.get_logger(__name__)
+
+
+class BackendListResponseError(BackendError):
+    """Resposta estruturalmente inválida de uma operação de listagem."""
 
 
 def backend_jsonrpc_error(error: Any) -> BackendJsonRpcError:
@@ -115,8 +124,24 @@ class BaseClient(ABC):
                 "clientInfo": {"name": "mcp-gateway", "version": __version__},
             },
         )
-        if isinstance(result, dict):
-            self.capabilities = result.get("capabilities", {})
+        # 1.3 — validar resposta de initialize do backend
+        if not isinstance(result, dict):
+            raise BackendError("Backend retornou resultado de initialize não-objeto")
+        backend_protocol = result.get("protocolVersion")
+        backend_caps = result.get("capabilities")
+        if (
+            not isinstance(backend_protocol, str)
+            or not is_supported_protocol_version(backend_protocol)
+            or backend_protocol != PROTOCOL_VERSION
+        ):
+            raise BackendError(
+                "Backend respondeu uma versão de protocolo incompatível no initialize"
+            )
+        if backend_caps is None or not isinstance(backend_caps, dict):
+            raise BackendError(
+                "Backend respondeu capabilities inválidas no initialize"
+            )
+        self.capabilities = backend_caps
         await self._send_notification("notifications/initialized")
 
     @property
@@ -163,7 +188,24 @@ class BaseClient(ABC):
 
     @staticmethod
     def _extract_list(result: Any, key: str) -> list[dict[str, Any]]:
+        """Extrai itens de uma resposta de listagem.
+
+        Diferencia "backend respondeu lista vazia válida" de "backend
+        respondeu algo malformado". Resposta estruturalmente inválida
+        (não-dict, campo ausente ou valor não-lista)
+        é um erro de domínio — não vira ``[]`` silenciosamente.
+        """
         if not isinstance(result, dict):
-            return []
-        items = result.get(key, [])
-        return items if isinstance(items, list) else []
+            raise BackendListResponseError(
+                f"Resposta de listagem não é objeto JSON: {type(result).__name__}"
+            )
+        if key not in result:
+            raise BackendListResponseError(
+                f"Resposta de listagem não contém campo '{key}'"
+            )
+        items = result[key]
+        if not isinstance(items, list):
+            raise BackendListResponseError(
+                f"Campo '{key}' não é uma lista: {type(items).__name__}"
+            )
+        return items
