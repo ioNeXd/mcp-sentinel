@@ -6,7 +6,12 @@ from typing import Any
 
 import structlog
 
-from gateway.errors import BackendError, BackendJsonRpcError
+from gateway.errors import (
+    BackendError,
+    BackendJsonRpcError,
+    BackendStateConflictError,
+    BackendTimeoutError,
+)
 from gateway import __version__
 from gateway.models import (
     INTERNAL_ERROR,
@@ -19,6 +24,13 @@ JSON_CONTENT_TYPE = "application/json"
 SSE_MEDIA_TYPE = "text/event-stream"
 EVENT_DATA_PREFIX = "data:"
 COMMENT_PREFIX = ":"
+
+# Estados do ciclo de vida compartilhado entre transportes (ver BaseClient).
+LIFECYCLE_NEW = "new"  # instância criada, conexão ainda não estabelecida
+LIFECYCLE_STARTING = "starting"  # conexão em curso, handshake não validado
+LIFECYCLE_READY = "ready"  # handshake validado por completo; pronto para requests
+LIFECYCLE_STOPPING = "stopping"  # encerramento em curso
+LIFECYCLE_STOPPED = "stopped"  # encerrado; recursos liberados
 
 logger = structlog.get_logger(__name__)
 
@@ -91,6 +103,157 @@ class BaseClient(ABC):
     def __init__(self) -> None:
         self._pending: dict[int | str, asyncio.Future[Any]] = {}
         self._capabilities: dict[str, Any] = {}
+        self._state: str = LIFECYCLE_NEW
+        self._initializing = False
+
+    # ------------------------------------------------------------------
+    # Ciclo de vida: máquina de estados compartilhada entre transportes.
+    #
+    # Os clients concretos (http, sse, stdio) orquestram os helpers abaixo
+    # dentro de start/stop, de modo que todos os transportes tenham o MESMO
+    # comportamento:
+    #
+    # - start(): _begin_start() → conectar → _initialize() (valida tudo) →
+    #   _mark_ready(); qualquer falha → stop() e re-raise (nada fica "meio
+    #   de pé" — nem capabilities publicadas, nem estado ready).
+    # - stop(): _begin_stop() (idempotente: False se já parando/parado) →
+    #   _fail_pending(disconnected) → liberar recursos → _mark_stopped().
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> str:
+        """Estado atual do ciclo de vida (ver constantes ``LIFECYCLE_*``)."""
+        return self._state
+
+    @property
+    def is_ready(self) -> bool:
+        """True só quando o handshake foi validado por completo."""
+        return self._state == LIFECYCLE_READY
+
+    def _begin_start(self) -> None:
+        """Entra no estado ``starting``; levanta conflito se já iniciado/em curso.
+
+        Guarda de idempotência e de corrida: um segundo ``start()`` concorrente
+        (ou um restart durante ``stopping``) não pode duplicar conexão nem
+        handshake.
+        """
+        backend = self._backend_name()
+        if self._state == LIFECYCLE_READY:
+            raise BackendStateConflictError(f"{backend}: já iniciado")
+        if self._state == LIFECYCLE_STARTING:
+            raise BackendStateConflictError(f"{backend}: start já em curso")
+        if self._state == LIFECYCLE_STOPPING:
+            raise BackendStateConflictError(f"{backend}: start incompatível com stop em curso")
+        self._state = LIFECYCLE_STARTING
+
+    def _mark_ready(self) -> None:
+        """Publica o estado ``ready`` — só chamado APÓS ``_initialize`` validar tudo."""
+        if self._state != LIFECYCLE_STARTING:
+            raise BackendStateConflictError(
+                f"{self._backend_name()}: _mark_ready chamado em estado '{self._state}'"
+            )
+        self._state = LIFECYCLE_READY
+
+    def _begin_stop(self) -> bool:
+        """Entra em ``stopping``. Devolve True só para o primeiro chamador.
+
+        Idempotência do ``stop()``: chamadas repetidas ou concorrentes devolvem
+        False e NÃO re-executam a liberação de recursos (o primeiro chamador é
+        o responsável).
+        """
+        if self._state in (LIFECYCLE_STOPPING, LIFECYCLE_STOPPED):
+            return False
+        self._state = LIFECYCLE_STOPPING
+        return True
+
+    def _mark_stopped(self) -> None:
+        """Conclui o encerramento. Requests passam a falhar com conflito de estado."""
+        self._state = LIFECYCLE_STOPPED
+
+    def _ensure_ready(self, action: str) -> None:
+        """Guarda usada antes de enviar requests: exige estado ``ready``."""
+        if self._state != LIFECYCLE_READY:
+            raise BackendStateConflictError(
+                f"{self._backend_name()}: '{action}' requer client pronto "
+                f"(estado atual: '{self._state}')"
+            )
+
+    # ------------------------------------------------------------------
+    # Pending requests: ciclo único de conclusão garantido.
+    #
+    # Nenhum transport conclui uma future diretamente — toda conclusão passa
+    # por aqui (pop + check ``done()``): uma request NUNCA é concluída duas
+    # vezes, mesmo com resposta tardia + timeout, ou abandonamento por
+    # cancelamento seguido da chegada da resposta.
+    # ------------------------------------------------------------------
+
+    def _register_pending(self, request_id: int | str) -> asyncio.Future[Any]:
+        """Cria e registra a future de resposta para um id JSON-RPC.
+
+        Levanta :class:`BackendStateConflictError` se o id já está pendente —
+        ids duplicados indicariam corrida de correlação inaceitável.
+        """
+        if request_id in self._pending:
+            raise BackendStateConflictError(
+                f"{self._backend_name()}: id {request_id} já pendente"
+            )
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._pending[request_id] = future
+        return future
+
+    def _pop_pending(self, request_id: int | str) -> asyncio.Future[Any] | None:
+        """Remove (sem concluir) a future do id; None se inexistente."""
+        return self._pending.pop(request_id, None)
+
+    def _resolve_pending(self, request_id: int | str, result: Any) -> bool:
+        """Conclui uma pending com sucesso. False se ela não existe mais.
+
+        Uma request abandonada (timeout, cancelamento, desconexão) já saiu de
+        ``_pending``: resposta tardia devolve False e é descartada pelo caller —
+        nunca concluída duas vezes.
+        """
+        future = self._pending.pop(request_id, None)
+        if future is None or future.done():
+            return False
+        future.set_result(result)
+        return True
+
+    def _reject_pending(self, request_id: int | str, exc: Exception) -> bool:
+        """Falha uma pending com erro. False se ela não existe mais (mesmo contrato)."""
+        future = self._pending.pop(request_id, None)
+        if future is None or future.done():
+            return False
+        set_exception_guarded(future, exc, backend=self._backend_name())
+        return True
+
+    async def _await_response(
+        self,
+        request_id: int | str,
+        future: asyncio.Future[Any],
+        timeout: float,
+        method: str,
+    ) -> Any:
+        """Aguarda a resposta correlacionada a um request já registrado.
+
+        Contrato compartilhado de timeout/cancelamento:
+
+        - ``asyncio.TimeoutError``: a pending é REMOVIDA de ``_pending`` e o
+          caller recebe :class:`BackendTimeoutError` (nunca o timeout cru) — a
+          resposta tardia será tratada como inesperada, sem conclusão dupla;
+        - ``asyncio.CancelledError``: a pending também é removida e a exceção é
+          SEMPRE re-propagada — cancelamento nunca é engolido nem convertido
+          em resultado vazio ou erro de domínio.
+        """
+        try:
+            return await asyncio.wait_for(future, timeout)
+        except asyncio.TimeoutError:
+            self._pop_pending(request_id)
+            raise BackendTimeoutError(
+                f"{self._backend_name()}: sem resposta para '{method}' em {timeout}s"
+            ) from None
+        except asyncio.CancelledError:
+            self._pop_pending(request_id)
+            raise
 
     @abstractmethod
     async def start(self) -> None:
@@ -132,38 +295,98 @@ class BaseClient(ABC):
     async def _initialize(self) -> None:
         """Handshake MCP: initialize + notifications/initialized.
 
-        Compartilhado por todos os transportes: o protocolo é o mesmo, só o
-        meio de envio muda. As capabilities anunciadas pelo backend ficam
-        guardadas em :attr:`capabilities`; implementações sobrescrevem
-        ``_send_notification`` quando sua notificação tem forma particular.
+        Compartilhado por todos os transportes. Contrato:
+
+        - só TERMINA após a validação completa da resposta (objeto JSON,
+          ``protocolVersion`` suportado e igual ao do Gateway, ``capabilities``
+          dict) — qualquer falha levanta ``BackendError``;
+        - ``capabilities`` só é publicado DEPOIS de toda a validação, e a
+          notificação ``notifications/initialized`` só é enviada depois disso:
+          um handshake malformado nunca vira "meio inicializado";
+        - não é reentrante: chamada concorrente levanta conflito de estado
+          (o start é responsabilidade de um único caller).
         """
-        result = await self.send_request(
-            "initialize",
-            {
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "mcp-gateway", "version": __version__},
-            },
-        )
-        # 1.3 — validar resposta de initialize do backend
-        if not isinstance(result, dict):
-            raise BackendError("Backend retornou resultado de initialize não-objeto")
-        backend_protocol = result.get("protocolVersion")
-        backend_caps = result.get("capabilities")
-        if (
-            not isinstance(backend_protocol, str)
-            or not is_supported_protocol_version(backend_protocol)
-            or backend_protocol != PROTOCOL_VERSION
-        ):
-            raise BackendError(
-                "Backend respondeu uma versão de protocolo incompatível no initialize"
+        if self._initializing:
+            raise BackendStateConflictError(f"{self._backend_name()}: initialize já em curso")
+        self._initializing = True
+        try:
+            result = await self.send_request(
+                "initialize",
+                {
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {"name": "mcp-gateway", "version": __version__},
+                },
             )
-        if backend_caps is None or not isinstance(backend_caps, dict):
-            raise BackendError(
-                "Backend respondeu capabilities inválidas no initialize"
+            # 1.3 — validar resposta de initialize do backend
+            if not isinstance(result, dict):
+                raise BackendError("Backend retornou resultado de initialize não-objeto")
+            backend_protocol = result.get("protocolVersion")
+            backend_caps = result.get("capabilities")
+            if (
+                not isinstance(backend_protocol, str)
+                or not is_supported_protocol_version(backend_protocol)
+                or backend_protocol != PROTOCOL_VERSION
+            ):
+                raise BackendError(
+                    "Backend respondeu uma versão de protocolo incompatível no initialize"
+                )
+            if backend_caps is None or not isinstance(backend_caps, dict):
+                raise BackendError("Backend respondeu capabilities inválidas no initialize")
+            # Validação completa OK: só agora publica capabilities e notifica.
+            self.capabilities = backend_caps
+            await self._send_notification("notifications/initialized")
+        finally:
+            self._initializing = False
+
+    def _apply_response(self, message: Any) -> bool:
+        """Correlaciona e aplica uma mensagem de RESPOSTA do backend.
+
+        Usado pelos leitores em background (stdio, sse) — o leitor NÃO faz pop
+        nem conclui futures diretamente; a conclusão acontece aqui.
+
+        Contrato de respostas malformadas: uma mensagem com ``id`` de request
+        que NÃO seja uma resposta válida (``jsonrpc != 2.0``, sem ``result`` E
+        sem ``error``) FALHA a pending com ``BackendError`` — nunca resolve com
+        resultado vazio (``None``/``{}``). Devolve True se a mensagem foi
+        aplicada a alguma pending (ou descartada por ser tardia/inesperada);
+        False se não é uma resposta (ex.: notificação) e o caller deve logar.
+        """
+        backend = self._backend_name()
+        if not isinstance(message, dict):
+            logger.warning("resposta não-objeto do backend", backend=backend, message=message)
+            return False
+        request_id = message.get("id")
+        if request_id is None or "method" in message:
+            # Notificação ou request do backend: não é resposta correlacionável.
+            return False
+        if message.get("jsonrpc") != "2.0":
+            self._reject_pending(
+                request_id,
+                BackendError(
+                    f"resposta malformada: jsonrpc '{message.get('jsonrpc')}' != '2.0'"
+                ),
             )
-        self.capabilities = backend_caps
-        await self._send_notification("notifications/initialized")
+            return True
+        error = message.get("error")
+        if error is not None:
+            self._reject_pending(request_id, backend_jsonrpc_error(error))
+            return True
+        if "result" not in message:
+            # Resposta sem 'result' e sem 'error': malformada — NUNCA resolver
+            # com resultado vazio (o bug era set_result(message.get("result")) → None).
+            self._reject_pending(
+                request_id, BackendError("resposta malformada: sem campo 'result' nem 'error'")
+            )
+            return True
+        resolved = self._resolve_pending(request_id, message["result"])
+        if not resolved:
+            logger.warning(
+                "resposta inesperada do backend (request abandonada ou id desconhecido)",
+                backend=backend,
+                id=request_id,
+            )
+        return resolved
 
     @property
     def capabilities(self) -> dict[str, Any]:

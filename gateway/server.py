@@ -376,9 +376,10 @@ class McpServer:
             )
             return make_error(request.id, ITEM_NOT_FOUND, f"Unknown tool: {tool_name}")
         logger.info("request_dispatched", method="tools/call", item=entry.namespaced, backend=entry.backend)
-        return await self._call_backend(
-            request.id, entry, "tools/call", {"name": entry.name, "arguments": arguments or {}}
-        )
+        call_params = dict(params)
+        call_params["name"] = entry.name
+        call_params["arguments"] = arguments or {}
+        return await self._call_backend(request.id, entry, "tools/call", call_params)
 
     async def _handle_resource_read(
         self, request: JsonRpcRequest, session_id: str | None = None
@@ -403,15 +404,17 @@ class McpServer:
             )
             return make_error(request.id, ITEM_NOT_FOUND, f"Unknown resource: {uri}")
         logger.info("request_dispatched", method="resources/read", item=entry.namespaced, backend=entry.backend)
-        result = await self._call_backend(
-            request.id, entry, "resources/read", {"uri": entry.name}
-        )
+        call_params = dict(params)
+        call_params["uri"] = entry.name
+        result = await self._call_backend(request.id, entry, "resources/read", call_params)
         # resources/read devolve contents com a uri ORIGINAL do backend; reescrevê-la
         # para o formato namespaced mantém o round-trip (o cliente devolve a uri que
         # o Gateway anunciou no resources/list).
         if result.get("error") is None and isinstance(result.get("result"), dict):
             result = dict(result)
-            result["result"] = self._namespace_content_uris(result["result"], entry.backend)
+            result["result"] = self._namespace_content_uris(
+                result["result"], entry.backend, entry.name
+            )
         return result
 
     async def _handle_prompt_get(
@@ -440,7 +443,8 @@ class McpServer:
             )
             return make_error(request.id, ITEM_NOT_FOUND, f"Unknown prompt: {prompt_name}")
         logger.info("request_dispatched", method="prompts/get", item=entry.namespaced, backend=entry.backend)
-        call_params: dict[str, Any] = {"name": entry.name}
+        call_params = dict(params)
+        call_params["name"] = entry.name
         if arguments is not None:
             call_params["arguments"] = arguments
         return await self._call_backend(request.id, entry, "prompts/get", call_params)
@@ -524,9 +528,9 @@ class McpServer:
 
     @staticmethod
     def _require_object_params(request: JsonRpcRequest) -> dict[str, Any] | None:
-        """Retorna ``params`` como objeto; ausência equivale a objeto vazio."""
+        """Retorna ``params`` como objeto; ausência é parâmetro inválido."""
         if request.params is None:
-            return {}
+            return None
         if isinstance(request.params, dict):
             return request.params
         return None
@@ -586,13 +590,18 @@ class McpServer:
         return payload
 
     @staticmethod
-    def _namespace_content_uris(result: dict[str, Any], backend: str) -> dict[str, Any]:
+    def _namespace_content_uris(
+        result: dict[str, Any], backend: str, original_uri: str
+    ) -> dict[str, Any]:
         contents = result.get("contents")
         if not isinstance(contents, list):
             return result
         rewritten = []
         for item in contents:
-            if isinstance(item, dict) and isinstance(item.get("uri"), str):
+            if (
+                isinstance(item, dict)
+                and item.get("uri") == original_uri
+            ):
                 item = dict(item)
                 item["uri"] = f"{backend}.{item['uri']}"
             rewritten.append(item)

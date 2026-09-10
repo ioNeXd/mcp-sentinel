@@ -114,8 +114,7 @@ class SseClient(BaseClient):
         handshake estourar o timeout, o start falha — e o auto-restart da
         Fase 2 tenta de novo com backoff, como no stdio.
         """
-        if self._http is not None:
-            return
+        self._begin_start()
         self._stopped = False
         self._post_url = ""  # recaptura do zero a cada conexão
         self._stream_url = ""
@@ -155,28 +154,32 @@ class SseClient(BaseClient):
             raise self._start_error
         try:
             await self._initialize()
+            self._mark_ready()
         except BaseException:
             await self.stop()
             raise
 
     async def stop(self) -> None:
         """Cancela a task de leitura e fecha o client HTTP (idempotente)."""
-        if self._stopped:
+        if not self._begin_stop():
             return
         self._stopped = True
-        self._fail_pending(
-            BackendDisconnectedError(f"backend '{self._config.name}': cliente encerrado")
-        )
-        task = self._reader_task
-        self._reader_task = None
-        if task is not None:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-        http = self._http
-        self._http = None
-        self._connected = False
-        if http is not None:
-            await http.aclose()
+        try:
+            self._fail_pending(
+                BackendDisconnectedError(f"backend '{self._config.name}': cliente encerrado")
+            )
+            task = self._reader_task
+            self._reader_task = None
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            http = self._http
+            self._http = None
+            self._connected = False
+            if http is not None:
+                await http.aclose()
+        finally:
+            self._mark_stopped()
 
     def is_alive(self) -> bool:
         """Vivo enquanto o stream SSE segue aberto (consulta sem I/O)."""
@@ -195,8 +198,7 @@ class SseClient(BaseClient):
             )
         self._next_id += 1
         request_id = self._next_id
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
+        future = self._register_pending(request_id)
         try:
             response = await http.post(
                 self._post_url,
@@ -204,13 +206,13 @@ class SseClient(BaseClient):
                 headers=JSON_HEADERS,
             )
         except httpx.TimeoutException as exc:
-            self._pending.pop(request_id, None)
+            self._pop_pending(request_id)
             raise BackendTimeoutError(
                 f"backend '{self._config.name}': POST de '{method}' excedeu"
                 f" {self._request_timeout}s"
             ) from exc
         except httpx.HTTPError as exc:
-            self._pending.pop(request_id, None)
+            self._pop_pending(request_id)
             # POST falhar com o stream aberto indica backend morto: trata como
             # desconexão (os pending restantes também não terão resposta).
             await self._on_stream_closed(f"POST falhou ({exc.__class__.__name__})")
@@ -222,18 +224,17 @@ class SseClient(BaseClient):
         # o pending. O stream em si segue aberto (o backend pode aceitar os
         # próximos POSTs).
         if response.status_code >= 400:
-            self._pending.pop(request_id, None)
+            self._pop_pending(request_id)
             raise BackendHttpStatusError(
                 response.status_code, method, backend=self._config.name
             )
         try:
-            return await asyncio.wait_for(future, timeout=self._request_timeout)
-        except asyncio.TimeoutError:
-            self._pending.pop(request_id, None)
-            raise BackendTimeoutError(
-                f"backend '{self._config.name}': sem resposta a '{method}'"
-                f" em {self._request_timeout}s (via stream SSE)"
-            ) from None
+            return await self._await_response(
+                request_id, future, self._request_timeout, method
+            )
+        except BaseException:
+            self._pop_pending(request_id)
+            raise
 
     async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         """Notificação também vai por POST ao endpoint anunciado (sem resposta)."""
@@ -463,19 +464,8 @@ class SseClient(BaseClient):
                 method=message.get("method"),
             )
             return
-        future = self._pending.get(request_id)
-        if future is None or future.done():
+        if not self._apply_response(message):
             logger.warning("resposta SSE inesperada", backend=self._config.name, id=request_id)
-            return
-        error = message.get("error")
-        if error is not None:
-            set_exception_guarded(
-                future,
-                backend_jsonrpc_error(error),
-                backend=self._config.name,
-            )
-        else:
-            future.set_result(message.get("result"))
 
     async def _on_stream_closed(self, reason: str) -> None:
         """Stream caiu: marca indisponível e falha os pending imediatamente.

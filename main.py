@@ -19,7 +19,7 @@ from gateway.http_server import create_app
 from gateway.logging import configure_logging
 from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 from gateway.server import McpServer
-from gateway.sessions import SessionFilter
+from gateway.sessions import SessionFilter, SessionPurger
 
 DEFAULT_PORT = 8080
 DEFAULT_HOST = "127.0.0.1"
@@ -104,6 +104,8 @@ async def main() -> int:
         backend_manager, interval_seconds=config.health_check_interval_seconds
     )
     health_monitor.start()
+    session_purger = SessionPurger(session_filter)
+    session_purger.start()
 
     app = create_app(
         mcp_server,
@@ -154,20 +156,23 @@ async def main() -> int:
         # de qualquer forma; o que faltava era silenciar o traceback).
         logger.info("gateway_shutdown_interrupted", reason="KeyboardInterrupt")
     finally:
-        await _graceful_shutdown(health_monitor, mcp_server)
+        await _graceful_shutdown(health_monitor, session_purger, mcp_server)
     return 0
 
 
 async def _graceful_shutdown(
-    health_monitor: HealthMonitor, mcp_server: McpServer
+    health_monitor: HealthMonitor,
+    session_purger: SessionPurger,
+    mcp_server: McpServer,
 ) -> None:
-    """Ordem de desligamento da Fase 2, tolerante a cancelamento/erros.
+    """Ordem de desligamento, tolerante a cancelamento/erros.
 
-    1) health monitor (para de checar/reiniciar); 2) backends — ``stop_all``
-    encerra cada processo filho (stdin fechado → terminate → kill), sem
-    deixar órfãos. Cada etapa é isolada: uma falha (incluído cancelamento
-    do ``main()`` no meio do shutdown) não impede a seguinte de rodar.
-    Emite ``gateway_shutdown_complete`` quando ambos os passos terminam.
+    1) health monitor (para de checar/reiniciar); 2) session purger;
+    3) backends — ``stop_all`` encerra cada processo filho (stdin fechado →
+    terminate → kill), sem deixar órfãos. Cada etapa é isolada: uma falha
+    (incluído cancelamento do ``main()`` no meio do shutdown) não impede a
+    seguinte de rodar. Emite ``gateway_shutdown_complete`` quando todos os
+    passos terminam.
     """
     cancelled = False
     try:
@@ -177,6 +182,13 @@ async def _graceful_shutdown(
         cancelled = True
     except Exception as exc:
         logger.error("falha ao parar o health monitor", error=str(exc))
+    try:
+        await session_purger.stop()
+    except asyncio.CancelledError:
+        logger.warning("shutdown_session_purger_cancelado")
+        cancelled = True
+    except Exception as exc:
+        logger.error("falha ao parar o session purger", error=str(exc))
     try:
         await mcp_server.stop()
     except asyncio.CancelledError:

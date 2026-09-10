@@ -73,10 +73,18 @@ class JsonRpcRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _capture_id_presence(cls, data: Any) -> Any:
-        """Registra se o campo ``id`` estava presente no JSON (incluso null)."""
+        """Registra se o campo ``id`` estava presente no JSON (incluso null).
+
+        Também rejeita ``id`` boolean: em Python ``bool`` é subclass de
+        ``int``, então ``True``/``False`` seriam coeridos para ``1``/``0``
+        e aceitos silenciosamente — a spec JSON-RPC só permite string,
+        number ou null.
+        """
         if isinstance(data, dict):
             data = dict(data)
             data["id_present"] = "id" in data
+            if isinstance(data.get("id"), bool):
+                raise ValueError("id não pode ser boolean (JSON true/false)")
         return data
 
 

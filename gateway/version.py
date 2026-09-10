@@ -1,5 +1,5 @@
-"""Compatibilidade para imports antigos da versão do Gateway."""
+"""Fonte única da versão do Gateway em runtime."""
 
-from gateway import __version__
+__version__ = "0.5.0"
 
 __all__ = ["__version__"]

@@ -61,8 +61,8 @@ class HttpClient(BaseClient):
         inicial: se o backend não responder, o start falha e o auto-restart
         da Fase 2 cuida de tentar de novo com backoff.
         """
-        if self._http is not None:
-            return
+        self._begin_start()
+        self._closed = False
         self._http = httpx.AsyncClient(
             base_url=self._config.url or "",
             headers=self._post_headers(),
@@ -70,20 +70,26 @@ class HttpClient(BaseClient):
         )
         try:
             await self._initialize()
+            self._mark_ready()
         except BaseException:
-            await self._http.aclose()
-            self._http = None
+            await self.stop()
             raise
 
     async def stop(self) -> None:
         """Fecha o httpx.AsyncClient de forma limpa (idempotente)."""
-        if self._closed:
+        if not self._begin_stop():
             return
         self._closed = True
-        http = self._http
-        self._http = None
-        if http is not None:
-            await http.aclose()
+        try:
+            self._fail_pending(
+                BackendDisconnectedError(f"backend '{self._config.name}': cliente encerrado")
+            )
+            http = self._http
+            self._http = None
+            if http is not None:
+                await http.aclose()
+        finally:
+            self._mark_stopped()
 
     def is_alive(self) -> bool:
         """Vivo enquanto o client HTTP não foi fechado (sem I/O aqui).
@@ -171,7 +177,14 @@ class HttpClient(BaseClient):
         error = body.get("error")
         if error is not None:
             raise backend_jsonrpc_error(error)
-        return body.get("result")
+        # Mesmo contrato de BaseClient._apply_response: resposta sem 'result'
+        # e sem 'error' é malformada — nunca devolver None/{} silenciosamente.
+        if "result" not in body:
+            raise BackendDisconnectedError(
+                f"backend '{self._config.name}': resposta malformada em '{method}'"
+                " (sem campo 'result' nem 'error')"
+            )
+        return body["result"]
 
     async def _read_sse_response(
         self, lines: AsyncIterator[str], request_id: int, method: str

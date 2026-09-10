@@ -4,9 +4,9 @@ Estas são as regras de conduta para qualquer IA/agente que trabalhar neste proj
 
 ## Antes de codar
 
-- Leia `ROADMAP.md` primeiro. Toda decisão de código deve ser compatível com as fases futuras — não implemente algo que precise ser jogado fora na Fase 1 ou 2.
-- Trabalhe **só na fase solicitada**. Não adiante features de fases futuras (ex: não implemente HTTP/SSE client na Fase 0, não implemente auth na Fase 0). Adiantar gera complexidade não testada.
-- Se uma instrução do prompt parecer conflitar com o Roadmap, pare e sinalize o conflito antes de decidir sozinho.
+- Leia o `README.md` (seção **Status atual** e **Escopo e pendências**) antes de alterar código. Toda decisão deve ser compatível com o que já está documentado como implementado e com o que está explicitamente adiado.
+- Trabalhe **só no escopo solicitado**. Não adiante features marcadas como pendentes no README (ex.: batch JSON-RPC, hot-reload de config, métricas Prometheus). Adiantar gera complexidade não testada.
+- Se uma instrução do prompt parecer conflitar com o README ou com o comportamento já documentado, pare e sinalize o conflito antes de decidir sozinho.
 
 ## Arquitetura
 
@@ -26,20 +26,20 @@ Estas são as regras de conduta para qualquer IA/agente que trabalhar neste proj
 
 ## Testes
 
-- Toda função pública nova vem com teste (`pytest`). Sem exceção, mesmo na Fase 0.
+- Toda função pública nova vem com teste (`pytest`). Sem exceção.
 - Para testar o `StdioClient`, crie um backend MCP fake (processo Python simples que responde `tools/list`/`tools/call` fixos) em vez de depender de um MCP real de terceiros — isso evita testes frágeis e dependências externas.
 - Teste o caminho de erro, não só o caminho feliz (ex: processo que não sobe, JSON malformado, backend que não responde).
-- Não avance para a próxima fase sem os testes da fase atual passando.
+- Não avance com a mudança sem os testes relevantes passando.
 
-## Ao final de cada fase
+## Ao final de cada mudança
 
 - Rode os testes.
-- Atualize o `README.md` com o que já funciona e como rodar.
-- Resuma em uma mensagem curta o que foi implementado, o que ficou pendente/decidido de forma diferente do prompt original, e por quê.
+- Atualize o `README.md` com o que já funciona e como rodar, se o comportamento observável mudou.
+- Resuma em uma mensagem curta o que foi implementado, o que ficou pendente/decidido de forma diferente do pedido original, e por quê.
 
 ## O que nunca fazer
 
 - Não introduzir dependências novas sem necessidade clara (cada lib nova é peso de manutenção).
-- Não implementar autenticação, multi-tenant, hot-reload ou dashboard antes das fases correspondentes no `ROADMAP.md`.
+- Não implementar features explicitamente adiadas no README (batch, hot-reload, métricas, multi-tenant) sem pedido explícito.
 - Não deixar código morto ou comentado "para depois" — se não é usado, remove.
-- Não assumir portas/descoberta automática de MCPs — o Gateway sempre inicia e gerencia os backends via config explícito (ver contexto no `ROADMAP.md`).
+- Não assumir portas/descoberta automática de MCPs — o Gateway sempre inicia e gerencia os backends via config explícito (ver seção de configuração do `README.md`).

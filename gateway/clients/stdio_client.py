@@ -47,63 +47,72 @@ class StdioClient(BaseClient):
 
     async def start(self) -> None:
         """Sobe o processo, inicia os leitores e faz o handshake initialize."""
-        if self._process is not None:
-            return
-        if self._config.command is None:
-            raise BackendError(f"backend '{self._config.name}': comando não configurado")
+        self._begin_start()
+        self._closed = False
+        self._reader_failed = False
         try:
-            self._process = await asyncio.create_subprocess_exec(
-                self._config.command,
-                *self._config.args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            if self._config.command is None:
+                raise BackendError(f"backend '{self._config.name}': comando não configurado")
+            try:
+                self._process = await asyncio.create_subprocess_exec(
+                    self._config.command,
+                    *self._config.args,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise BackendError(
+                    f"backend '{self._config.name}': comando não encontrado: {self._config.command}"
+                ) from exc
+            self._reader_task = asyncio.create_task(
+                self._read_stdout(), name=f"stdio-reader-{self._config.name}"
             )
-        except FileNotFoundError as exc:
-            raise BackendError(
-                f"backend '{self._config.name}': comando não encontrado: {self._config.command}"
-            ) from exc
-        self._reader_task = asyncio.create_task(
-            self._read_stdout(), name=f"stdio-reader-{self._config.name}"
-        )
-        self._stderr_task = asyncio.create_task(
-            self._read_stderr(), name=f"stdio-stderr-{self._config.name}"
-        )
-        # 6.1 — se o handshake falhar, processo e tasks de leitura seriam
-        # órfãos (processo vivo, tasks rodando) e uma tentativa futura de
-        # start() veria self._process setado e acharia que já está de pé.
-        # Mesmo padrão de HttpClient/SseClient: stop() e re-raise.
-        try:
+            self._stderr_task = asyncio.create_task(
+                self._read_stderr(), name=f"stdio-stderr-{self._config.name}"
+            )
+            # 6.1 — se o handshake falhar, processo e tasks de leitura seriam
+            # órfãos (processo vivo, tasks rodando) e uma tentativa futura de
+            # start() veria self._process setado e acharia que já está de pé.
+            # Mesmo padrão de HttpClient/SseClient: stop() e re-raise.
+            # Contrato BaseClient: só marca ready APÓS initialize validar tudo.
             await self._initialize()
+            self._mark_ready()
         except BaseException:
             await self.stop()
             raise
 
     async def stop(self) -> None:
         """Encerra o processo (stdin fechado, depois terminate/kill) e cancela as tasks."""
-        if self._closed:
+        if not self._begin_stop():
             return
         self._closed = True
-        self._fail_pending(
-            BackendDisconnectedError(f"backend '{self._config.name}': cliente encerrado")
-        )
-        process = self._process
-        if process is not None and process.stdin and not process.stdin.is_closing():
-            process.stdin.close()
-        if process is not None:
-            try:
-                await asyncio.wait_for(process.wait(), timeout=STOP_GRACE_SECONDS)
-            except asyncio.TimeoutError:
-                process.terminate()
+        try:
+            self._fail_pending(
+                BackendDisconnectedError(f"backend '{self._config.name}': cliente encerrado")
+            )
+            process = self._process
+            if process is not None and process.stdin and not process.stdin.is_closing():
+                process.stdin.close()
+            if process is not None:
                 try:
                     await asyncio.wait_for(process.wait(), timeout=STOP_GRACE_SECONDS)
                 except asyncio.TimeoutError:
-                    process.kill()
-                    await process.wait()
-        tasks = [task for task in (self._reader_task, self._stderr_task) if task is not None]
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=STOP_GRACE_SECONDS)
+                    except asyncio.TimeoutError:
+                        process.kill()
+                        await process.wait()
+            tasks = [task for task in (self._reader_task, self._stderr_task) if task is not None]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._process = None
+            self._reader_task = None
+            self._stderr_task = None
+        finally:
+            self._mark_stopped()
 
     # ------------------------------------------------------------------
     # Envio/recebimento JSON-RPC
@@ -138,18 +147,17 @@ class StdioClient(BaseClient):
             )
         self._next_id += 1
         request_id = self._next_id
-        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        await self._write(
-            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
-        )
+        future = self._register_pending(request_id)
         try:
-            return await asyncio.wait_for(future, timeout=self._request_timeout)
-        except asyncio.TimeoutError:
-            self._pending.pop(request_id, None)
-            raise BackendTimeoutError(
-                f"backend '{self._config.name}': sem resposta a '{method}' em {self._request_timeout}s"
-            ) from None
+            await self._write(
+                {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
+            )
+            return await self._await_response(
+                request_id, future, self._request_timeout, method
+            )
+        except BaseException:
+            self._pop_pending(request_id)
+            raise
 
     async def _write(self, payload: dict[str, Any]) -> None:
         if self._closed or self._process is None or self._process.stdin is None:
@@ -174,6 +182,8 @@ class StdioClient(BaseClient):
             while True:
                 line = await self._process.stdout.readline()
                 if not line:
+                    if not self._closed:
+                        self._reader_failed = True
                     break
                 await self._handle_message(line)
         except asyncio.CancelledError:
@@ -217,22 +227,10 @@ class StdioClient(BaseClient):
                     id=request_id,
                     jsonrpc=message.get("jsonrpc"),
                 )
-                return
-            future = self._pending.pop(request_id, None)
-            if future is None or future.done():
+            if not self._apply_response(message):
                 logger.warning(
                     "resposta inesperada do backend", backend=self._config.name, id=request_id
                 )
-                return
-            error = message.get("error")
-            if error is not None:
-                set_exception_guarded(
-                    future,
-                    backend_jsonrpc_error(error),
-                    backend=self._config.name,
-                )
-            else:
-                future.set_result(message.get("result"))
             return
         logger.debug(
             "notificação recebida do backend",

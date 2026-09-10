@@ -209,13 +209,14 @@ class BackendManager:
         """
         failures = 0
         for name in self._states:
-            try:
-                await self._start_one(name)
-            except BackendError as exc:
-                failures += 1
-                logger.error("backend_start_failed", backend=name, error=str(exc))
-                self._states[name].status = BackendStatus.OFFLINE
-                self._states[name].consecutive_failures = 1
+            async with self._restart_locks[name]:
+                try:
+                    await self._start_one(name)
+                except BackendError as exc:
+                    failures += 1
+                    logger.error("backend_start_failed", backend=name, error=str(exc))
+                    self._states[name].status = BackendStatus.OFFLINE
+                    self._states[name].consecutive_failures = 1
         if failures == len(self._states):
             raise BackendError("nenhum backend conseguiu iniciar")
 
@@ -236,6 +237,16 @@ class BackendManager:
     # ------------------------------------------------------------------
 
     async def check_and_recover(self, backend_name: str) -> BackendStatus:
+        """Serializa toda a decisão de health/recovery por backend."""
+        state = self._states.get(backend_name)
+        if state is None:
+            return BackendStatus.OFFLINE
+        async with self._restart_locks[backend_name]:
+            return await self._check_and_recover_locked(backend_name, state)
+
+    async def _check_and_recover_locked(
+        self, backend_name: str, state: BackendState
+    ) -> BackendStatus:
         """Um passo do Health Monitor para um backend: checa e tenta recuperar.
 
         Sequência por backend: processo morto/sem resposta → offline (registros
@@ -249,10 +260,6 @@ class BackendManager:
         saída desse estado é ``enable()``. Um aviso é logado apenas UMA vez por
         período disabled (não a cada ciclo).
         """
-        state = self._states.get(backend_name)
-        if state is None:
-            return BackendStatus.OFFLINE
-
         if state.status is BackendStatus.DISABLED:
             if not state.warn_disabled_logged:
                 logger.info(
@@ -464,6 +471,25 @@ class BackendManager:
                 f"backend '{backend_name}': enable só se aplica a backends disabled"
                 f" (status atual: {state.status.value})"
             )
+        # 4.x — mesmo lock de restart()/disable()/_attempt_restart(): sem ele,
+        # um enable() e um restart() manual (ou uma tentativa automática, se o
+        # estado permitir) quase simultâneos podiam chamar _start_one() ao
+        # mesmo tempo para o mesmo backend, registrando dois clients. A
+        # revalidação do status DEPOIS de pegar o lock cobre o caso em que o
+        # backend deixou de estar DISABLED enquanto esperávamos a seção
+        # crítica (ex.: outro enable()/restart() já concluiu primeiro).
+        async with self._restart_locks[backend_name]:
+            state = self._states[backend_name]
+            if state.status is not BackendStatus.DISABLED:
+                raise BackendStateConflictError(
+                    f"backend '{backend_name}': enable só se aplica a backends disabled"
+                    f" (status atual: {state.status.value})"
+                )
+            await self._start_one_locked(backend_name, state)
+        logger.info("backend_enabled", backend=backend_name)
+
+    async def _start_one_locked(self, backend_name: str, state: "BackendState") -> None:
+        """Corpo de enable() que precisa rodar dentro do restart lock."""
         try:
             await self._start_one(backend_name)
         except BackendError as exc:
@@ -485,7 +511,6 @@ class BackendManager:
             raise BackendError(
                 f"backend '{backend_name}' não subiu após enable: {exc}"
             ) from exc
-        logger.info("backend_enabled", backend=backend_name)
 
     async def restart(self, backend_name: str) -> None:
         """Restart manual imediato — funciona em QUALQUER estado (Fase 4).

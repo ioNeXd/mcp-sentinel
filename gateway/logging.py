@@ -12,16 +12,20 @@ import logging
 import structlog
 
 
-def configure_logging(level: int = logging.INFO, force: bool = True) -> None:
+def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     """Configura structlog (contextvars + nível) e o logging stdlib base.
 
     O renderer ConsoleRenderer formata eventos legíveis no terminal local.
     Os logs de bibliotecas (uvicorn etc.) seguem pelo logging stdlib.
 
-    ``force`` é repassado a ``logging.basicConfig``: por padrão ``True`` (uso
-    standalone do Gateway), mas quem embotar o pacote como biblioteca pode
-    passar ``force=False`` para não destruir uma configuração de logging
-    já existente no processo hospedeiro.
+    ``force`` é repassado a ``logging.basicConfig``.
+
+    Modo biblioteca (padrão): ``force=False`` — não destrói uma configuração
+    de logging já existente no processo hospedeiro.
+
+    Modo aplicação standalone: quem controla o processo (ex.: ``main.py``)
+    deve chamar explicitamente ``configure_logging(force=True)`` para
+    garantir que a configuração do Gateway prevaleça.
     """
     logging.basicConfig(level=level, format="%(message)s", force=force)
     structlog.configure(

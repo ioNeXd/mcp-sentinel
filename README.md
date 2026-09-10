@@ -21,10 +21,10 @@ há descoberta automática de portas.
 
 **Status atual: Fase 5 concluída** — filtro seletivo de backends por sessão
 (extensão `gateway/session/*`), controle manual de backends, dashboard e
-importador. Testes: **279/279 passando**. O `SseClient` segue o padrão
-HTTP+SSE do MCP (evento `endpoint` com URL literal), validado contra
-servidores SSE reais. Veja o `ROADMAP.md` para o plano completo e o
-`AGENT_INSTRUCTIONS.md` para as regras de conduta.
+importador. O `SseClient` segue o padrão HTTP+SSE do MCP (evento `endpoint`
+com URL literal), validado contra servidores SSE reais. Rode `pytest` para
+confirmar a suíte atual. Veja **Escopo e pendências** abaixo para o que
+fica adiado e o `AGENT_INSTRUCTIONS.md` para as regras de conduta.
 
 ## O que funciona nesta fase
 
@@ -489,9 +489,12 @@ reinícios de backend continuam refletindo normalmente na view filtrada.
 
 Sessão sem atividade expira após `session_ttl_seconds` (default 3600s) e volta
 a ver todos os backends — comportamento seguro, nunca o contrário (expiração
-nunca bloqueia). Qualquer request com o mesmo `Mcp-Session-Id` renova o TTL;
-limpeza de sessões abandonadas é oportunista (por contagem/intervalo), sem
-acumular memória.
+nunca bloqueia). Qualquer request com o mesmo `Mcp-Session-Id` renova o TTL.
+Há um teto de sessões simultâneas (`max_sessions`, default 256): ao lotar, a
+sessão com deadline mais antigo é evictada. A limpeza de sessões abandonadas
+combina purge oportunista (por contagem de escritas / intervalo) com um
+`SessionPurger` em background (mesmo ritmo do intervalo oportunista), para que
+sessões nunca mais lidas saiam da memória mesmo sem tráfego novo.
 
 ### Medindo se vale a pena: `GET /api/tools/size`
 
@@ -739,11 +742,15 @@ expiração por TTL com clock fake e o endpoint de diagnóstico `/api/tools/size
 ## Escopo e pendências
 
 - O transporte é JSON-RPC puro sobre `POST /mcp` (stateless). A dança de
-  sessão do streamable HTTP (`Mcp-Session-Id`, 202) e o suporte a batch ficam
-  para fases futuras.
+  sessão do streamable HTTP MCP (header de sessão oficial + HTTP 202 em
+  notificações de forma protocolar completa) e o suporte a **batch** JSON-RPC
+  ficam para fases futuras. Hoje o body do `POST /mcp` deve ser um **único**
+  objeto JSON-RPC; arrays (batch) recebem `-32600` Invalid Request. O header
+  `Mcp-Session-Id` já é usado pela extensão de filtro seletivo do Gateway
+  (não confundir com a sessão do streamable HTTP do spec).
 - Restart de backend stdio usa a mesma `command`/`args` do config (sem
-  hot-reload de config — decisão do ROADMAP: reiniciar o processo é aceitável
-  na v1). Para http/sse o restart reconecta na `url` declarada.
+  hot-reload de config — reiniciar o processo é aceitável na v1). Para
+  http/sse o restart reconecta na `url` declarada.
 - O fake SSE segue o spec HTTP+SSE: emite o evento `endpoint` como primeiro
   evento (com `session_id` validado — POST fora da URL anunciada vira 404,
   como servidores reais) e tem flags para os caminhos alternativos do
@@ -763,20 +770,19 @@ expiração por TTL com clock fake e o endpoint de diagnóstico `/api/tools/size
   A integração com servidores SSE reais de terceiros foi validada contra esse
   contrato, incluindo o cenário de rota fora de `/sse`.
 - O dashboard (`GET /`) é server-rendered e read-only: sem JavaScript e sem
-  ações na página — controle é via `/api/*` (decisão do ROADMAP: "dashboard
-  começa read-only; ações via `/api/*` diretamente").
-- **Métricas (Prometheus/OpenTelemetry): adiadas**, conforme a própria condição
-  do ROADMAP ("se o número de backends justificar"). O projeto é de uso
-  pessoal com poucos backends — `/health`, `/api/servers` e os logs
-  estruturados com `request_id` cobrem a observabilidade necessária hoje, e
-  antecipar a dependência seria peso de manutenção sem uso (regra do
-  `AGENT_INSTRUCTIONS`: não introduzir dependência sem necessidade clara).
-  O diagnóstico prático desta fase é o `GET /api/tools/size`.
+  ações na página — controle é via `/api/*`.
+- **Métricas (Prometheus/OpenTelemetry): adiadas** até o número de backends
+  justificar. O projeto é de uso pessoal com poucos backends — `/health`,
+  `/api/servers` e os logs estruturados com `request_id` cobrem a
+  observabilidade necessária hoje, e antecipar a dependência seria peso de
+  manutenção sem uso (regra do `AGENT_INSTRUCTIONS`: não introduzir
+  dependência sem necessidade clara). O diagnóstico prático desta fase é o
+  `GET /api/tools/size`.
 - O filtro seletivo é extensão do Gateway (`gateway/session/*`) — o método
   customizado NÃO integra o spec MCP; clientes padrão nunca precisam dele.
-- Pendente para a **Fase 6** do `ROADMAP.md`: MCPs customizados próprios e
-  adapters de auto-instalação em outros apps (Cursor, VSCode, etc.) — fora do
-  escopo do McpSentinel, conforme o ROADMAP, projeto separado.
+- **Pendente (fora do escopo atual)**: MCPs customizados próprios e adapters
+  de auto-instalação em outros apps (Cursor, VSCode, etc.) — projeto
+  separado, se houver demanda.
 
 ## Licença
 
