@@ -57,8 +57,8 @@ def test_render_dashboard_importado_com_backend() -> None:
         ],  
         token=None,  
     )  
-    assert "<tr>" in html  
-    assert "<td>backend-a</td>" in html
+    assert 'class="card"' in html  
+    assert 'data-name="backend-a"' in html
 
 
 async def make_app_with_fakes() -> McpServer:
