@@ -14,8 +14,15 @@ jobs:
     strategy:  
       fail-fast: false  
       matrix:  
-        os: [ubuntu-latest, windows-latest, macos-latest]  
-        python-version: ["3.10", "3.11", "3.12", "3.13"]  
+        # macOS removido: não há código específico de macOS (o único código  
+        # dependente de plataforma é o SIGBREAK do Windows em main.py) e é o  
+        # runner que mais fica em fila. ubuntu = baseline POSIX; windows =  
+        # cobre o caminho SIGBREAK/shutdown específico.  
+        os: [ubuntu-latest, windows-latest]  
+        # Só as pontas do range suportado (requires-python >=3.10): a mínima  
+        # (3.10) e a máxima (3.13). 3.11/3.12 ficam de fora por raramente  
+        # revelarem algo que as pontas não peguem.  
+        python-version: ["3.10", "3.13"]  
     steps:  
       - uses: actions/checkout@v4  
       - uses: actions/setup-python@v5  
