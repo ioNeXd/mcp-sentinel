@@ -328,7 +328,10 @@ class BaseClient(ABC):
         """Correlaciona e aplica uma mensagem de RESPOSTA do backend.  
   
         Usado pelos leitores em background (stdio, sse): o leitor NÃO faz pop  
-        nem conclui futures diretamente; a conclusão acontece aqui.  
+        nem conclui futures diretamente; a conclusão acontece aqui. Esta é  
+        também a ÚNICA autoridade de validação do envelope de resposta — os  
+        transportes não devem revalidar ``jsonrpc``/``result``/``error`` por  
+        conta própria (o aviso de resposta malformada é logado aqui).  
   
         Contrato de respostas malformadas: uma mensagem com ``id`` de request  
         que NÃO seja uma resposta válida (``jsonrpc != "2.0"``, ou sem  
@@ -346,6 +349,12 @@ class BaseClient(ABC):
         if request_id is None or "method" in message:  
             return False  
         if message.get("jsonrpc") != "2.0":  
+            logger.warning(  
+                "resposta malformada sem jsonrpc 2.0",  
+                backend=backend,  
+                id=request_id,  
+                jsonrpc=message.get("jsonrpc"),  
+            )  
             self._reject_pending(  
                 request_id,  
                 BackendError(  
