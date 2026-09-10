@@ -3,7 +3,9 @@
     {
       "name": "backend-a",
       "command": "python",
-      "args": ["tests/fake_backend.py"]
+      "args": [
+        "tests/fake_backend.py"
+      ]
     },
     {
       "name": "remoto",
@@ -24,6 +26,13 @@
       "name": "vscode-mcp",
       "type": "http",
       "url": "http://localhost:3000/mcp"
+    },
+    {
+      "name": "backend-teste",
+      "command": "python",
+      "args": [
+        "tests/fake_backend.py"
+      ]
     }
   ],
   "auth_token": "meu-token-secreto-123",

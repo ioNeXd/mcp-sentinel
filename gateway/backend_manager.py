@@ -220,6 +220,42 @@ class BackendManager:
         if failures == len(self._states):
             raise BackendError("nenhum backend conseguiu iniciar")
 
+    async def add_backend(self, backend_config: BackendConfig) -> None:
+        """Registra e sobe UM backend novo em tempo real (Fase 7 — painel do
+        dashboard, ``POST /api/config/backends``).
+
+        Não toca em nenhum backend existente: só adiciona entradas novas aos
+        dicts internos (``_states``, ``_restart_locks``) e reaproveita o
+        mesmo caminho de start usado no boot (``_start_one``), sob o lock
+        próprio do backend novo — nunca precisa de lock global, então os
+        outros backends seguem intocados durante o start.
+
+        Uma falha ao subir (``BackendError``) NÃO propaga: o backend fica
+        ``OFFLINE`` com ``consecutive_failures=1``, exatamente como
+        ``start_all()`` trata um backend que falha no boot — o
+        ``HealthMonitor`` assume o restart (com backoff) a partir daqui,
+        igual a qualquer outro backend offline.
+
+        Raises:
+            ValueError: já existe um backend com esse nome. É uma checagem
+                redundante com a da rota HTTP (que já valida antes de
+                chamar), mas o manager não deve confiar cegamente no
+                chamador — chamar isso fora da rota também fica seguro.
+        """
+        name = backend_config.name
+        if name in self._states:
+            raise ValueError(f"backend '{name}' já existe")
+        state = BackendState(name=name, config=backend_config)
+        self._states[name] = state
+        self._restart_locks[name] = asyncio.Lock()
+        async with self._restart_locks[name]:
+            try:
+                await self._start_one(name)
+            except BackendError as exc:
+                logger.error("backend_start_failed", backend=name, error=str(exc))
+                state.status = BackendStatus.OFFLINE
+                state.consecutive_failures = 1
+
     async def stop_all(self) -> None:
         """Cancela restarts pendentes, para os backends e limpa os registries (idempotente)."""
         for task in self._restart_tasks.values():

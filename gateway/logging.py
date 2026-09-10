@@ -11,6 +11,8 @@ import logging
 
 import structlog
 
+from gateway.log_stream import broadcast_processor
+
 
 def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     """Configura structlog (contextvars + nível) e o logging stdlib base.
@@ -33,6 +35,7 @@ def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
+            broadcast_processor,
             structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
