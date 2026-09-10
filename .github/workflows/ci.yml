@@ -1,24 +1,31 @@
-name: CI
-
-on:
-  push:
-  pull_request:
-
-jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -r requirements.txt
-      - run: python -m pip install ruff mypy
-      - run: pytest -q
-      - run: ruff check .
+name: CI  
+  
+on:  
+  push:  
+  pull_request:  
+  
+jobs:  
+  test:  
+    runs-on: ${{ matrix.os }}  
+    # Teto duro por job: sem isso, um teste travado prende o runner até o  
+    # limite de 6h do GitHub. Com pytest-timeout abaixo isso quase nunca é  
+    # atingido, mas fica como rede de segurança final.  
+    timeout-minutes: 20  
+    strategy:  
+      fail-fast: false  
+      matrix:  
+        os: [ubuntu-latest, windows-latest, macos-latest]  
+        python-version: ["3.10", "3.11", "3.12", "3.13"]  
+    steps:  
+      - uses: actions/checkout@v4  
+      - uses: actions/setup-python@v5  
+        with:  
+          python-version: ${{ matrix.python-version }}  
+      - run: python -m pip install -r requirements.txt  
+      - run: python -m pip install ruff mypy  
+      # --timeout-method=thread: os hangs aqui envolvem I/O de socket/subprocesso  
+      # (não só o event loop), então o método de sinal não os interromperia.  
+      # Um teste que passar de 60s falha com traceback do ponto do travamento.  
+      - run: pytest -q --timeout=60 --timeout-method=thread  
+      - run: ruff check .  
       - run: mypy gateway/
