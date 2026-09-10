@@ -37,14 +37,12 @@ import httpx
 import structlog
 
 from gateway.clients.base import (
-    COMMENT_PREFIX,
-    EVENT_DATA_PREFIX,
-    JSON_CONTENT_TYPE,
-    SSE_MEDIA_TYPE,
-    BaseClient,
-    backend_jsonrpc_error,
-    set_exception_guarded,
-)
+    COMMENT_PREFIX,  
+    EVENT_DATA_PREFIX,  
+    JSON_CONTENT_TYPE,  
+    SSE_MEDIA_TYPE,  
+    BaseClient,  
+)  
 from gateway.config import BackendConfig
 from gateway.errors import (
     BackendDisconnectedError,

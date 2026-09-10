@@ -6,12 +6,11 @@ from typing import Any
 
 import structlog
 
-from gateway.clients.base import BaseClient, backend_jsonrpc_error, set_exception_guarded
-from gateway.config import BackendConfig
-from gateway.errors import (
-    BackendDisconnectedError,
-    BackendError,
-    BackendTimeoutError,
+from gateway.clients.base import BaseClient  
+from gateway.config import BackendConfig  
+from gateway.errors import (  
+    BackendDisconnectedError,  
+    BackendError,  
 )
 
 logger = structlog.get_logger(__name__)
