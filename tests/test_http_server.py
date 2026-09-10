@@ -35,28 +35,29 @@ ADD_TOOL = {
 BASE_URL = "http://test"
 
 
-def test_render_dashboard_importado_com_backend() -> None:
-    html = _render_dashboard(
-        {
-            "status": "ok",
-            "backends": {"backend-a": "running"},
-            "tools_count": 1,
-            "resources_count": 0,
-            "prompts_count": 0,
-        },
-        [
-            {
-                "name": "backend-a",
-                "type": "stdio",
-                "status": "RUNNING",
-                "tools_count": 1,
-                "resources_count": 0,
-                "prompts_count": 0,
-                "consecutive_failures": 0,
-            }
-        ],
-    )
-    assert "<tr>" in html
+def test_render_dashboard_importado_com_backend() -> None:  
+    html = _render_dashboard(  
+        {  
+            "status": "ok",  
+            "backends": {"backend-a": "running"},  
+            "tools_count": 1,  
+            "resources_count": 0,  
+            "prompts_count": 0,  
+        },  
+        [  
+            {  
+                "name": "backend-a",  
+                "type": "stdio",  
+                "status": "RUNNING",  
+                "tools_count": 1,  
+                "resources_count": 0,  
+                "prompts_count": 0,  
+                "consecutive_failures": 0,  
+            }  
+        ],  
+        token=None,  
+    )  
+    assert "<tr>" in html  
     assert "<td>backend-a</td>" in html
 
 
