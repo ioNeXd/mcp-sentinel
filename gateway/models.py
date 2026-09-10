@@ -106,19 +106,13 @@ class JsonRpcResponse(BaseModel):
   
   
 def make_result(request_id: int | str | None, result: Any) -> dict[str, Any]:  
-    """Monta o dict de resposta JSON-RPC com resultado.  
+    """Monta um dict de resposta JSON-RPC 2.0 com ``result``.  
   
-    ``result`` e ``id`` são reatribuídos após o ``model_dump(exclude_none=True)``  
-    porque um resultado ``null`` legítimo (ou ``id: null``) seria descartado  
-    pelo ``exclude_none`` — e a spec exige que ambos apareçam na resposta.  
+    ``id`` e ``result`` são sempre incluídos, inclusive quando valem ``None``  
+    (a spec exige ``id`` presente na resposta, e ``result: null`` é um  
+    resultado válido — distinto de "campo ausente").  
     """  
-    payload = JsonRpcResponse(  
-        jsonrpc="2.0", id=request_id, result=result  
-    ).model_dump(exclude_none=True)  
-    payload["result"] = result  
-    if request_id is None:  
-        payload["id"] = None  
-    return payload  
+    return {"jsonrpc": "2.0", "id": request_id, "result": result}  
   
   
 def make_error(  
@@ -127,12 +121,13 @@ def make_error(
     message: str,  
     data: Any = None,  
 ) -> dict[str, Any]:  
-    """Monta o dict de resposta JSON-RPC com erro (``id: null`` quando desconhecido)."""  
-    payload = JsonRpcResponse(  
-        jsonrpc="2.0",  
-        id=request_id,  
-        error=JsonRpcErrorDetail(code=code, message=message, data=data),  
-    ).model_dump(exclude_none=True)  
-    if request_id is None:  
-        payload["id"] = None  
-    return payload
+    """Monta um dict de resposta JSON-RPC 2.0 com ``error``.  
+  
+    ``id`` é sempre incluído (``null`` quando a request era desconhecida/não  
+    parseável). O campo ``data`` só entra no objeto de erro quando não é  
+    ``None``, preservando a semântica anterior de ``exclude_none``.  
+    """  
+    error: dict[str, Any] = {"code": code, "message": message}  
+    if data is not None:  
+        error["data"] = data  
+    return {"jsonrpc": "2.0", "id": request_id, "error": error}
