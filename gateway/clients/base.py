@@ -327,19 +327,18 @@ class BaseClient(ABC):
     def _apply_response(self, message: Any) -> bool:  
         """Correlaciona e aplica uma mensagem de RESPOSTA do backend.  
   
-        Usado pelos leitores em background (stdio, sse): o leitor NÃO faz pop  
-        nem conclui futures diretamente; a conclusão acontece aqui. Esta é  
-        também a ÚNICA autoridade de validação do envelope de resposta — os  
-        transportes não devem revalidar ``jsonrpc``/``result``/``error`` por  
-        conta própria (o aviso de resposta malformada é logado aqui).  
+        Usado pelos leitores em background (stdio, sse) — o leitor NÃO faz pop  
+        nem conclui futures diretamente; a conclusão acontece aqui.  
   
         Contrato de respostas malformadas: uma mensagem com ``id`` de request  
-        que NÃO seja uma resposta válida (``jsonrpc != "2.0"``, ou sem  
-        ``result`` E sem ``error``) FALHA a pending com ``BackendError`` —  
-        nunca resolve com resultado vazio (``None``/``{}``). Devolve True se a  
-        mensagem foi aplicada a alguma pending (ou descartada por tardia/  
-        inesperada); False se não é uma resposta (ex.: notificação) e o caller  
-        deve logar.  
+        que NÃO seja uma resposta válida (``jsonrpc != 2.0``, sem ``result`` E  
+        sem ``error``) FALHA a pending com ``BackendError`` — nunca resolve com  
+        resultado vazio (``None``/``{}``). Antes de rejeitar, o envelope  
+        malformado é logado como aviso (``"resposta malformada do backend"``):  
+        esta é a ÚNICA autoridade de validação de envelope (os leitores de  
+        transporte apenas delegam). Devolve True se a mensagem foi aplicada a  
+        alguma pending (ou descartada por ser tardia/inesperada); False se não  
+        é uma resposta (ex.: notificação) e o caller deve logar.  
         """  
         backend = self._backend_name()  
         if not isinstance(message, dict):  
@@ -347,12 +346,14 @@ class BaseClient(ABC):
             return False  
         request_id = message.get("id")  
         if request_id is None or "method" in message:  
+            # Notificação ou request do backend: não é resposta correlacionável.  
             return False  
         if message.get("jsonrpc") != "2.0":  
             logger.warning(  
-                "resposta malformada sem jsonrpc 2.0",  
+                "resposta malformada do backend",  
                 backend=backend,  
                 id=request_id,  
+                reason="jsonrpc != 2.0",  
                 jsonrpc=message.get("jsonrpc"),  
             )  
             self._reject_pending(  
@@ -367,6 +368,12 @@ class BaseClient(ABC):
             self._reject_pending(request_id, backend_jsonrpc_error(error))  
             return True  
         if "result" not in message:  
+            logger.warning(  
+                "resposta malformada do backend",  
+                backend=backend,  
+                id=request_id,  
+                reason="sem 'result' nem 'error'",  
+            )  
             self._reject_pending(  
                 request_id, BackendError("resposta malformada: sem campo 'result' nem 'error'")  
             )  
@@ -378,7 +385,7 @@ class BaseClient(ABC):
                 backend=backend,  
                 id=request_id,  
             )  
-        return resolved  
+        return resolved
   
     @property  
     def capabilities(self) -> dict[str, Any]:  

@@ -305,50 +305,43 @@ async def test_send_notification_levanta_quando_client_encerrado() -> None:
 
 @pytest.mark.asyncio  
 async def test_handle_message_rejeita_jsonrpc_invalido() -> None:  
-    """_handle_message delega a validação de envelope para _apply_response.  
+    """Envelope malformado é validado por BaseClient._apply_response.  
   
-    Após o BUG-A, StdioClient._handle_message não valida mais jsonrpc/result/  
-    error: apenas distingue resposta de notificação e delega 100% para  
-    BaseClient._apply_response, autoridade única de validação. Uma mensagem  
-    com ``id`` de request mas ``jsonrpc`` ausente/errado é malformada: a base  
-    loga o aviso e FALHA a pending correspondente com BackendError (nunca a  
-    resolve com resultado vazio).  
+    Após o BUG-A, StdioClient._handle_message não valida mais o envelope:  
+    delega 100% para _apply_response, que loga o aviso  
+    "resposta malformada do backend" e FALHA a pending com BackendError —  
+    nunca resolve com resultado vazio.  
     """  
     client = make_client()  
     await client.start()  
     try:  
-        # Mensagens com id de request mas jsonrpc ausente/errado — malformadas.  
-        malformed = [  
-            {"id": 1, "result": {}},            # sem jsonrpc  
-            {"jsonrpc": "1.0", "id": 2, "result": {}},   # jsonrpc errado  
-            {"jsonrpc": None, "id": 3, "result": {}},    # jsonrpc null  
+        malformed_lines = [  
+            json.dumps({"id": 1, "result": {}}).encode(),  # sem jsonrpc  
+            json.dumps({"jsonrpc": "1.0", "id": 2, "result": {}}).encode(),  # jsonrpc errado  
+            json.dumps({"jsonrpc": None, "id": 3, "result": {}}).encode(),  # jsonrpc null  
         ]  
-        # Registra uma pending real por id para provar que a base a REJEITA  
-        # (o comportamento antigo apenas ignorava a mensagem).  
-        futures = {  
-            msg["id"]: client._register_pending(msg["id"])  # noqa: SLF001  
-            for msg in malformed  
-        }  
+        # Registra uma pending real para cada id: o contrato é FALHAR a future  
+        # com BackendError (não resolver com resultado vazio).  
+        futures = [client._register_pending(i) for i in (1, 2, 3)]  # noqa: SLF001  
         with capture_structlog_events() as events:  
-            for msg in malformed:  
-                await client._handle_message(json.dumps(msg).encode())  # noqa: SLF001  
-  
-        # A base emite o aviso de envelope malformado (uma vez por mensagem);  
-        # o antigo aviso "resposta inesperada" do stdio NÃO deve mais aparecer.  
+            for line in malformed_lines:  
+                await client._handle_message(line)  # noqa: SLF001  
         malformed_events = [  
             e for e in events if e["event"] == "resposta malformada do backend"  
         ]  
         assert len(malformed_events) == 3, (  
             f"esperado 3 avisos de envelope inválido, got {len(malformed_events)}"  
         )  
-        assert not [  
-            e for e in events if e["event"] == "resposta inesperada do backend"  
-        ]  
-        # Cada pending foi FALHADA com BackendError (nunca resolvida vazia).  
-        for fut in futures.values():  
+        # Cada pending foi FALHADA com BackendError (nunca resolvida com None/{}).  
+        for fut in futures:  
             assert fut.done()  
             with pytest.raises(BackendError):  
                 fut.result()  
+        # Nenhum aviso antigo de "resposta inesperada" deve ter sido emitido.  
+        assert not [  
+            e for e in events if e["event"].startswith("resposta inesperada")  
+        ]  
+        # Todas as pendings foram consumidas.  
         assert client._pending == {}  # noqa: SLF001  
     finally:  
         await client.stop()
