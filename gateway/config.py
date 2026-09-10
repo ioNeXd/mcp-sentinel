@@ -1,4 +1,13 @@
-"""Configuração do Gateway: modelos Pydantic + loader do config.json."""  
+"""Configuração do Gateway: modelos Pydantic e loader do ``config.json``.  
+  
+Define o esquema declarativo do arquivo de configuração — um ``BackendConfig``  
+por servidor MCP agregado, agrupados sob um ``GatewayConfig`` raiz — e a função  
+``load_config``, único ponto de entrada de leitura do disco.  
+  
+Toda validação (campos obrigatórios por transporte, unicidade de nomes, limites  
+numéricos, sanidade de URL/headers) acontece na construção dos modelos, de modo  
+que o restante do Gateway pode assumir uma configuração já íntegra.  
+"""  
   
 import json  
 import re  
@@ -11,42 +20,50 @@ from urllib.parse import urlparse
   
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator  
   
-DEFAULT_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024  # 10 MiB  
+DEFAULT_MAX_PAYLOAD_BYTES = 10 * 1024 * 1024  
 DEFAULT_HEALTH_CHECK_INTERVAL_SECONDS = 5.0  
 DEFAULT_MAX_RESTART_ATTEMPTS = 5  
 DEFAULT_BACKEND_REQUEST_TIMEOUT_SECONDS = 30.0  
-DEFAULT_SESSION_TTL_SECONDS = 3600.0  # sessão do filtro seletivo sem atividade  
+DEFAULT_SESSION_TTL_SECONDS = 3600.0  
 BACKEND_NAME_PATTERN = r"^[A-Za-z0-9_-]+$"  
   
-# Tetos superiores dos valores numéricos de configuração. Sem eles, um valor  
-# absurdamente grande é aceito silenciosamente e vira um problema em runtime:  
-# um timeout "infinito" prende um request para sempre; um intervalo/TTL gigante  
-# equivale a desligar o mecanismo sem avisar; um payload de gigabytes convida a  
-# exaustão de memória. Os limites abaixo são folgados (nenhum uso legítimo os  
-# alcança) e servem só para transformar valores obviamente errados numa falha  
-# de configuração clara, no load, em vez de um comportamento estranho depois.  
-MAX_MAX_PAYLOAD_BYTES = 1024 * 1024 * 1024  # 1 GiB  
-MAX_HEALTH_CHECK_INTERVAL_SECONDS = 86_400.0  # 1 dia  
-MAX_BACKEND_REQUEST_TIMEOUT_SECONDS = 86_400.0  # 1 dia  
+# Tetos superiores dos campos numéricos. Servem para transformar um valor  
+# obviamente errado (timeout "infinito", intervalo/TTL que desliga o mecanismo  
+# na prática, payload de gigabytes que convida à exaustão de memória) numa  
+# falha de configuração clara no load, em vez de comportamento estranho em  
+# runtime. São folgados de propósito: nenhum uso legítimo os alcança.  
+MAX_MAX_PAYLOAD_BYTES = 1024 * 1024 * 1024  
+MAX_HEALTH_CHECK_INTERVAL_SECONDS = 86_400.0  
+MAX_BACKEND_REQUEST_TIMEOUT_SECONDS = 86_400.0  
 MAX_RESTART_ATTEMPTS = 1_000  
-MAX_SESSION_TTL_SECONDS = 30 * 86_400.0  # 30 dias  
+MAX_SESSION_TTL_SECONDS = 30 * 86_400.0  
+  
+# Nomes permitidos em header field-name conforme RFC 7230 (token).  
+_HEADER_NAME_TOKEN = re.compile(r"^[!#$%&'*+\-.^_|~0-9A-Za-z]+$")  
   
   
 class BackendType(str, Enum):  
-    """Transporte do backend MCP (Fase 3 do ROADMAP)."""  
+    """Transporte de comunicação com um backend MCP.  
   
-    STDIO = "stdio"  # processo filho: JSON-RPC newline-delimited via stdin/stdout  
-    HTTP = "http"  # servidor remoto: JSON-RPC por POST na url  
-    SSE = "sse"  # servidor remoto: POST /messages + stream GET de Server-Sent Events  
+    - ``STDIO``: processo filho falando JSON-RPC delimitado por newline via  
+      stdin/stdout.  
+    - ``HTTP``: servidor remoto que recebe JSON-RPC por POST na ``url``.  
+    - ``SSE``: servidor remoto com POST em ``/messages`` mais um stream GET de  
+      Server-Sent Events.  
+    """  
+  
+    STDIO = "stdio"  
+    HTTP = "http"  
+    SSE = "sse"  
   
   
 class BackendConfig(BaseModel):  
-    """Descrição de um backend MCP no config.json.  
+    """Descrição de um backend MCP no ``config.json``.  
   
-    O conjunto de campos obrigatórios depende do ``type``:  
-    - ``stdio``: ``command`` (e ``args`` opcional);  
-    - ``http``/``sse``: ``url`` (e ``headers`` opcional), sem command/args.  
-    A validação cruzada vive no ``model_validator`` no fim da classe.  
+    O conjunto de campos obrigatórios depende do ``type``: backends ``stdio``  
+    exigem ``command`` (com ``args`` opcional) e rejeitam ``url``; backends  
+    ``http``/``sse`` exigem ``url`` (com ``headers`` opcional) e rejeitam  
+    ``command``/``args``. A validação cruzada vive em :meth:`_validate`.  
     """  
   
     name: str = Field(  
@@ -65,8 +82,14 @@ class BackendConfig(BaseModel):
             " campo continuam válidos."  
         ),  
     )  
-    command: str | None = Field(default=None, description="Comando que sobe o processo MCP (só stdio).")  
-    args: list[str] = Field(default_factory=list, description="Argumentos do comando (só stdio).")  
+    command: str | None = Field(  
+        default=None,  
+        description="Comando que sobe o processo MCP (só stdio).",  
+    )  
+    args: list[str] = Field(  
+        default_factory=list,  
+        description="Argumentos do comando (só stdio).",  
+    )  
     url: str | None = Field(  
         default=None,  
         description="URL base do backend remoto (obrigatório para http/sse).",  
@@ -75,11 +98,20 @@ class BackendConfig(BaseModel):
         default_factory=dict,  
         description="Headers HTTP extras enviados a backends http/sse (ex.: auth do próprio backend).",  
     )  
+    request_timeout_seconds: float | None = Field(  
+        default=None,  
+        gt=0,  
+        le=MAX_BACKEND_REQUEST_TIMEOUT_SECONDS,  
+        description=(  
+            "Timeout (s) de cada request a este backend. Default:"  
+            f" {DEFAULT_BACKEND_REQUEST_TIMEOUT_SECONDS} quando ausente."  
+        ),  
+    )  
   
     @field_validator("url")  
     @classmethod  
     def _validate_url(cls, v: str | None) -> str | None:  
-        """Valida que a URL usa esquema http/https e tem host não-vazio."""  
+        """Exige esquema http/https e host não-vazio quando ``url`` é fornecida."""  
         if v is None:  
             return v  
         try:  
@@ -99,13 +131,12 @@ class BackendConfig(BaseModel):
     def _validate_headers(cls, v: dict[str, str]) -> dict[str, str]:  
         """Valida nomes e valores de headers conforme RFC 7230.  
   
-        Nomes devem ser tokens HTTP válidos; valores não podem conter  
-        quebras de linha (\\r ou \\n) — prevenindo header injection.  
+        Nomes precisam ser tokens HTTP válidos e valores não podem conter  
+        quebras de linha (``\\r``/``\\n``), fechando a porta para header  
+        injection via config.  
         """  
-        # RFC 7230 token pattern: caracteres permitidos em header field-name  
-        token_pattern = re.compile(r"^[!#$%&'*+\-.^_|~0-9A-Za-z]+$")  
         for name, value in v.items():  
-            if not token_pattern.match(name):  
+            if not _HEADER_NAME_TOKEN.match(name):  
                 raise ValueError(  
                     f"header '{name}': nome inválido (não é um token HTTP válido conforme RFC 7230)"  
                 )  
@@ -115,18 +146,15 @@ class BackendConfig(BaseModel):
                 )  
         return v  
   
-    request_timeout_seconds: float | None = Field(  
-        default=None,  
-        gt=0,  
-        le=MAX_BACKEND_REQUEST_TIMEOUT_SECONDS,  
-        description=(  
-            "Timeout (s) de cada request a este backend. Default:"  
-            f" {DEFAULT_BACKEND_REQUEST_TIMEOUT_SECONDS} quando ausente."  
-        ),  
-    )  
-  
     @model_validator(mode="after")  
     def _validate(self) -> "BackendConfig":  
+        """Aplica a coerência entre ``type`` e os campos específicos do transporte.  
+  
+        Backends ``stdio`` exigem ``command`` e recusam ``url``; backends  
+        remotos exigem ``url`` e recusam ``command``/``args``. Um ``args`` vazio  
+        declarado explicitamente num backend remoto emite aviso (não erro), por  
+        ser um resquício provável de um bloco stdio copiado/colado.  
+        """  
         if self.type is BackendType.STDIO:  
             if not self.command:  
                 raise ValueError(  
@@ -146,8 +174,6 @@ class BackendConfig(BaseModel):
                     f"backend '{self.name}': 'command'/'args' só se aplicam a backends stdio"  
                     " (use 'url')"  
                 )  
-            # 2.3 — aviso se args foi declarado explicitamente (provavelmente resquício  
-            # de copiar/colar de um config stdio): não é erro, mas é suspeito.  
             if "args" in self.model_fields_set and self.args == []:  
                 warnings.warn(  
                     f"backend '{self.name}': 'args' declarado explicitamente como lista vazia "  
@@ -159,7 +185,7 @@ class BackendConfig(BaseModel):
   
   
 class GatewayConfig(BaseModel):  
-    """Configuração raiz do Gateway."""  
+    """Configuração raiz do Gateway: a lista de backends e os parâmetros globais."""  
   
     backends: list[BackendConfig]  
     auth_token: str | None = Field(  
@@ -223,7 +249,11 @@ class GatewayConfig(BaseModel):
     )  
   
     def request_timeout_for(self, backend: BackendConfig) -> float:  
-        """Timeout de request efetivo de um backend: o específico vence o global."""  
+        """Resolve o timeout efetivo de um backend.  
+  
+        Precedência: o valor específico do backend vence o global, que por sua  
+        vez vence o default do Gateway.  
+        """  
         if backend.request_timeout_seconds is not None:  
             return backend.request_timeout_seconds  
         if self.backend_request_timeout_seconds is not None:  
@@ -232,6 +262,7 @@ class GatewayConfig(BaseModel):
   
     @model_validator(mode="after")  
     def _validate(self) -> "GatewayConfig":  
+        """Exige ao menos um backend e nomes únicos entre eles."""  
         if not self.backends:  
             raise ValueError("config.json deve definir ao menos um backend")  
         name_counts = Counter(backend.name for backend in self.backends)  
@@ -242,10 +273,11 @@ class GatewayConfig(BaseModel):
   
   
 def load_config(path: Path) -> GatewayConfig:  
-    """Carrega e valida o config.json, levantando ValueError com erro claro.  
+    """Carrega e valida o ``config.json``, sempre levantando ``ValueError`` em falha.  
   
-    Captura toda falha de leitura/parse/validação e converta em ValueError,  
-    para que o main.py (except ValueError) receba sempre mensagem legível.  
+    Toda falha de leitura, parse ou validação é convertida em ``ValueError`` com  
+    mensagem legível, de modo que o chamador (``main.py``) tenha um único tipo de  
+    exceção para tratar e nunca receba um ``pydantic.ValidationError`` cru.  
     """  
     try:  
         raw: Any = json.loads(path.read_text(encoding="utf-8"))  
@@ -254,16 +286,10 @@ def load_config(path: Path) -> GatewayConfig:
     except json.JSONDecodeError as exc:  
         raise ValueError(f"config.json inválido em {path} (JSON malformado): {exc}") from exc  
     except UnicodeDecodeError as exc:  
-        raise ValueError(  
-            f"config.json em {path} não é UTF-8 válido: {exc}"  
-        ) from exc  
+        raise ValueError(f"config.json em {path} não é UTF-8 válido: {exc}") from exc  
     except OSError as exc:  
-        # Cobre erros de I/O não cobertos por FileNotFoundError (permissão  
-        # negada, é um diretório, etc.).  
         raise ValueError(f"erro ao ler configuração em {path}: {exc}") from exc  
     try:  
         return GatewayConfig.model_validate(raw)  
     except ValidationError as exc:  
-        raise ValueError(  
-            f"config.json inválido em {path}: {exc}"  
-        ) from exc
+        raise ValueError(f"config.json inválido em {path}: {exc}") from exc
