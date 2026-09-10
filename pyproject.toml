@@ -20,9 +20,8 @@ python_version = "3.10"
 files = ["gateway"]  
 ignore_missing_imports = true  
   
-# O mesmo timeout vale localmente (não só no CI), e o modo do pytest-asyncio  
-# fica fixado explicitamente para não depender do default do plugin.  
+# O mesmo timeout vale localmente (não só no CI). Sem timeout_method: o método  
+# padrão (signal, no Linux/macOS) reporta qual teste travou. asyncio_mode fixo.  
 [tool.pytest.ini_options]  
 timeout = 60  
-timeout_method = "thread"  
 asyncio_mode = "strict"

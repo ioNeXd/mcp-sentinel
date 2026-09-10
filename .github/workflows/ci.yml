@@ -14,14 +14,7 @@ jobs:
     strategy:  
       fail-fast: false  
       matrix:  
-        # macOS removido: não há código específico de macOS (o único código  
-        # dependente de plataforma é o SIGBREAK do Windows em main.py) e é o  
-        # runner que mais fica em fila. ubuntu = baseline POSIX; windows =  
-        # cobre o caminho SIGBREAK/shutdown específico.  
         os: [ubuntu-latest, windows-latest]  
-        # Só as pontas do range suportado (requires-python >=3.10): a mínima  
-        # (3.10) e a máxima (3.13). 3.11/3.12 ficam de fora por raramente  
-        # revelarem algo que as pontas não peguem.  
         python-version: ["3.10", "3.13"]  
     steps:  
       - uses: actions/checkout@v4  
@@ -30,9 +23,9 @@ jobs:
           python-version: ${{ matrix.python-version }}  
       - run: python -m pip install -r requirements.txt  
       - run: python -m pip install ruff mypy  
-      # --timeout-method=thread: os hangs aqui envolvem I/O de socket/subprocesso  
-      # (não só o event loop), então o método de sinal não os interromperia.  
-      # Um teste que passar de 60s falha com traceback do ponto do travamento.  
-      - run: pytest -q --timeout=60 --timeout-method=thread  
+      # -v imprime cada nome de teste antes de rodar; método padrão (signal)  
+      # reporta QUAL teste estourou o timeout (o thread mata o processo sem  
+      # dizer qual foi). Um teste que passar de 60s falha com o nome no log.  
+      - run: pytest -q -v --timeout=60  
       - run: ruff check .  
       - run: mypy gateway/
