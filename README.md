@@ -119,22 +119,39 @@ token. Como o navegador não envia header `Authorization`, acesse com
 ## Configuração  
   
 O Gateway lê `config/config.json` (ou o caminho em `MCP_GATEWAY_CONFIG`):  
+
+## Config
   
+O `config/config.json` versionado traz **apenas os backends de exemplo/  
+compartilhados** (`remoto`, `eventos`, `backend-teste`) e `auth_token: null`  
+
 ```json  
 {  
   "backends": [  
-    { "name": "backend-a", "command": "python", "args": ["tests/fake_backend.py"] },  
-    { "name": "remoto", "type": "http", "url": "http://127.0.0.1:9000",  
-      "headers": {"Authorization": "Bearer token-do-backend"} },  
-    { "name": "eventos", "type": "sse", "url": "http://127.0.0.1:9001" }  
+    {  
+      "name": "remoto",  
+      "type": "http",  
+      "url": "http://127.0.0.1:9000"  
+    },  
+    {  
+      "name": "eventos",  
+      "type": "sse",  
+      "url": "http://127.0.0.1:9001"  
+    },  
+    {  
+      "name": "backend-teste",  
+      "command": "python",  
+      "args": [  
+        "tests/fake_backend.py"  
+      ]  
+    }  
   ],  
   "auth_token": null,  
   "max_payload_bytes": 10485760,  
   "health_check_interval_seconds": 5,  
   "auto_restart": true,  
   "max_restart_attempts": 5,  
-  "backend_request_timeout_seconds": 30,  
-  "session_ttl_seconds": 3600  
+  "backend_request_timeout_seconds": 30  
 }  
 ```  
   
