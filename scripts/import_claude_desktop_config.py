@@ -54,15 +54,20 @@ import sys
 from pathlib import Path  
 from typing import Any  
   
-# Padrões do projeto (gateway/config.py): nomes viram prefixo de namespace  
-# delimitado por '.', então só letras/números/underscore/hífen são válidos.  
+#: Padrão de nome válido para backend do Gateway (ver ``gateway/config.py``):  
+#: nomes viram prefixo de namespace delimitado por ``.``, então só  
+#: letras/números/underscore/hífen são aceitos.  
 VALID_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")  
   
-# Pontes conhecidas que escondem um servidor remoto atrás de um processo stdio.  
-# Qualquer script cujo nome contenha um destes termos também é sinalizado —  
-# detecção de melhor esforço, sem pretensão de ser completa.  
+#: Pontes conhecidas que escondem um servidor remoto atrás de um processo  
+#: stdio. Qualquer script cujo nome contenha um destes termos também é  
+#: sinalizado — detecção de melhor esforço, sem pretensão de ser completa.  
 KNOWN_BRIDGES = {"mcp-remote", "supergateway", "mcp-proxy"}  
 BRIDGE_NAME_HINTS = ("remote", "proxy", "gateway", "bridge")  
+  
+#: Destino default quando ``--output`` não é informado (arquivo de revisão,  
+#: nunca o ``config/config.json`` do Gateway em si).  
+DEFAULT_OUTPUT = Path("config/config.imported.json")  
   
   
 def _load_config_json(source_path: Path) -> Any:  
@@ -73,8 +78,6 @@ def _load_config_json(source_path: Path) -> Any:
         raise ValueError(f"arquivo não encontrado: {source_path}") from exc  
     except json.JSONDecodeError as exc:  
         raise ValueError(f"JSON malformado em {source_path}: {exc}") from exc  
-  
-DEFAULT_OUTPUT = Path("config/config.imported.json")  
   
   
 def sanitize_backend_name(raw_name: str) -> str:  
@@ -94,6 +97,7 @@ def _looks_like_bridge(tokens: list[str]) -> bool:
     Varre o comando E os argumentos: com ``npx``/``uvx`` a ponte aparece nos  
     args (ex.: ``["-y", "mcp-remote", "https://..."]``), não no comando.  
     Regras por token (basename, sem extensão):  
+  
     - igual a uma ponte conhecida (mcp-remote, supergateway, mcp-proxy) → sim;  
     - contém um dos hints (remote/proxy/gateway/bridge) → sim — exceto tokens  
       que são flags (começam com "-"), URLs (contêm "://") ou caminhos com  
@@ -108,11 +112,11 @@ def _looks_like_bridge(tokens: list[str]) -> bool:
         if stem in KNOWN_BRIDGES or base in KNOWN_BRIDGES:  
             return True  
         if token.startswith("-") or "://" in token:  
-            continue  # flag ou URL: não é nome de pacote/script  
+            continue  
         if "." in base and base.rsplit(".", 1)[1] in {  
             "json", "md", "txt", "yaml", "yml", "toml"  
         }:  
-            continue  # documento referenciado, não um executável  
+            continue  
         if any(hint in stem for hint in BRIDGE_NAME_HINTS):  
             return True  
     return False  
@@ -120,8 +124,7 @@ def _looks_like_bridge(tokens: list[str]) -> bool:
   
 def _expand_env(value: str) -> str:  
     """Expande variáveis de ambiente best-effort (%VAR% no Windows, $VAR no POSIX)."""  
-    expanded = os.path.expandvars(value)  
-    return expanded  
+    return os.path.expandvars(value)  
   
   
 def convert_entry(  
@@ -130,13 +133,15 @@ def convert_entry(
     """Converte uma entrada de ``mcpServers`` para o formato do Gateway.  
   
     Devolve ``(backend_ou_None, avisos)``. ``None`` + aviso significa entrada  
-    NÃO convertida (nunca é descartada silenciosamente).  
+    NÃO convertida (nunca é descartada silenciosamente). A ordem de decisão é:  
+    ``env`` é sempre sinalizado (o Gateway não o aplica); em seguida tenta o  
+    caminho remoto (``url`` + ``type``), depois a detecção de ponte, e por  
+    último o caminho stdio comum.  
     """  
     warnings: list[str] = []  
     if not isinstance(entry, dict):  
         return None, [f"[{name}] entrada não é um objeto: {entry!r} — ignorada"]  
   
-    # --- Campo 'env' do Claude: não suportado pelo Gateway -----------------  
     if entry.get("env"):  
         warnings.append(  
             f"[{name}] campo 'env' não é aplicado — o Gateway não suporta "  
@@ -144,7 +149,6 @@ def convert_entry(
             "se depender delas)"  
         )  
   
-    # --- Caminho 1: servidor remoto declarado com url ----------------------  
     url = entry.get("url")  
     if url and not entry.get("command"):  
         remote_type = entry.get("type")  
@@ -159,7 +163,6 @@ def convert_entry(
             "adicionando \"type\": \"http\" ou \"sse\")"  
         ]  
   
-    # --- Caminho 2: ponte para servidor remoto via comando -----------------  
     command = entry.get("command")  
     if not isinstance(command, str) or not command:  
         return None, [f"[{name}] sem 'command' nem 'url' utilizável — ignorada"]  
@@ -176,7 +179,6 @@ def convert_entry(
             'ou {"type": "sse", "url": "..."} (a URL real está nos args da ponte)'  
         ]  
   
-    # --- Caminho 3: stdio comum --------------------------------------------  
     if " " in command:  
         warnings.append(  
             f"[{name}] 'command' contém espaços ('{command}') — no Gateway o "  
@@ -192,9 +194,7 @@ def convert_entry(
     }  
     unknown = sorted(set(entry) - {"command", "args", "env", "type"})  
     if unknown:  
-        warnings.append(  
-            f"[{name}] campos ignorados: {', '.join(unknown)}"  
-        )  
+        warnings.append(f"[{name}] campos ignorados: {', '.join(unknown)}")  
     return backend, warnings  
   
   
@@ -202,6 +202,11 @@ def import_config(
     source_path: Path, prefix: str = ""  
 ) -> tuple[dict[str, Any], list[str]]:  
     """Lê o config do Claude e devolve ``(gateway_config, avisos)``.  
+  
+    Para cada servidor: sanitiza o nome, resolve colisões (a primeira entrada  
+    convertida vence; as seguintes com o mesmo nome são sinalizadas e puladas)  
+    e aplica o ``prefix`` opcional antes de delegar a conversão a  
+    ``convert_entry``.  
   
     Levanta ``ValueError`` com mensagem clara para arquivos ausentes,  
     malformados ou sem a seção ``mcpServers``.  
@@ -217,7 +222,6 @@ def import_config(
     warnings: list[str] = []  
     used_names: set[str] = set()  
     for server_name, entry in raw["mcpServers"].items():  
-        # --- nome: sanitização + colisão + prefixo opcional ----------------  
         clean = sanitize_backend_name(str(server_name))  
         if not clean:  
             warnings.append(  
@@ -288,7 +292,6 @@ def _write_output(destination: Path, content: str, force: bool) -> bool:
         tmp_path.write_text(content, encoding="utf-8")  
         os.replace(tmp_path, destination)  
     except BaseException:  
-        # Não deixa o temporário órfão se algo falhar (inclui cancelamento).  
         try:  
             tmp_path.unlink()  
         except FileNotFoundError:  
@@ -297,7 +300,8 @@ def _write_output(destination: Path, content: str, force: bool) -> bool:
     return True  
   
   
-def main(argv: list[str] | None = None) -> int:  
+def _build_arg_parser() -> argparse.ArgumentParser:  
+    """Monta o parser da CLI (mantido separado de ``main`` para clareza)."""  
     parser = argparse.ArgumentParser(  
         description=(  
             "Importa mcpServers do claude_desktop_config.json para o formato "  
@@ -340,6 +344,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(  
         "-v", "--verbose", action="store_true", help="avisos também no stderr"  
     )  
+    return parser  
+  
+  
+def main(argv: list[str] | None = None) -> int:  
+    """Entrada da CLI. Devolve o exit code do processo.  
+  
+    Códigos: ``0`` sucesso (ou --stdout/--list-servers), ``1`` quando nenhum  
+    backend foi convertido (nada a gravar) e ``2`` para erros de entrada  
+    (arquivo ausente/malformado, destino já existente sem --force).  
+    """  
+    parser = _build_arg_parser()  
     options = parser.parse_args(argv)  
   
     source = Path(options.config) if options.config else _default_claude_config_path()  
