@@ -1,4 +1,19 @@
-"""Ponto de entrada do MCP Gateway (Fase 2 do ROADMAP)."""  
+"""Ponto de entrada do MCP Gateway: sobe todos os componentes e desliga tudo.  
+  
+Orquestra o ciclo de vida completo do processo do Gateway em modo aplicação  
+standalone:  
+  
+1. valida a configuração runtime (porta e host via env, config.json);  
+2. sobe backends (McpServer.start), Health Monitor e Session Purger;  
+3. serve o HTTP via uvicorn até receber o sinal de shutdown;  
+4. desliga tudo graciosamente no ``finally`` — sem deixar processos órfãos  
+   nem vazar traceback na saída do Ctrl+C.  
+  
+Sinais de shutdown: o uvicorn instala os handlers de SIGINT/SIGTERM e apenas  
+marca ``should_exit`` (não sobrescrevemos esses sinais, para não conflitar com  
+o próprio shutdown dele); no Windows completamos com o CTRL_BREAK (SIGBREAK)  
+via ``_install_sigbreak_handler``.  
+"""  
   
 import asyncio  
 import logging  
@@ -29,18 +44,22 @@ logger = structlog.get_logger("main")
   
   
 def _configured_host() -> str:  
-    """Retorna o bind configurado, mantendo o default local seguro."""  
+    """Retorna o host de bind (env ``MCP_GATEWAY_HOST``), com fallback local seguro.  
+  
+    Vazio ou só espaços cai no default ``127.0.0.1`` — nunca expõe o Gateway  
+    além da máquina local por acidente de configuração.  
+    """  
     return os.environ.get("MCP_GATEWAY_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST  
   
   
 def _install_sigbreak_handler(server: uvicorn.Server) -> None:  
-    """No Windows, CTRL_BREAK (SIGBREAK) também dispara o shutdown gracioso.  
+    """No Windows, faz CTRL_BREAK (SIGBREAK) também disparar o shutdown gracioso.  
   
-    O uvicorn instala handlers só para SIGINT/SIGTERM; CTRL_BREAK (usado por  
-    ferramentas e gerenciadores de serviço no Windows) cairia no handler  
-    default do Python — término duro, sem passar pelo ``finally``. O handler  
-    apenas marca ``should_exit`` e o loop do uvicorn encerra pelo mesmo  
-    caminho do Ctrl+C. Em outros sistemas não há SIGBREAK: nada a fazer.  
+    O uvicorn instala handlers só para SIGINT/SIGTERM; CTRL_BREAK — usado por  
+    ferramentas e gerenciadores de serviço no Windows — cairia no handler  
+    default do Python, resultando em término duro sem passar pelo ``finally``.  
+    O handler apenas marca ``should_exit``, de modo que o loop do uvicorn  
+    encerra pelo mesmo caminho do Ctrl+C. Em sistemas sem SIGBREAK é um no-op.  
     """  
     if not hasattr(signal, "SIGBREAK"):  
         return  
@@ -53,10 +72,20 @@ def _install_sigbreak_handler(server: uvicorn.Server) -> None:
   
   
 async def main() -> int:  
-    """Sobe backends, health monitor e o HTTP; desliga tudo graciosamente."""  
-    # Modo aplicação standalone: força a configuração de logging do Gateway a  
-    # prevalecer sobre qualquer basicConfig pré-existente no processo (ver  
-    # docstring de configure_logging — modo aplicação usa force=True).  
+    """Sobe backends, Health Monitor e o HTTP; desliga tudo graciosamente.  
+  
+    Retorna o exit code do processo: ``0`` em desligamento normal (inclusive  
+    Ctrl+C) e ``1`` em falha de configuração ou de startup dos backends.  
+  
+    Em modo aplicação standalone força a configuração de logging do Gateway a  
+    prevalecer sobre qualquer ``basicConfig`` pré-existente no processo  
+    (``force=True`` — ver docstring de ``configure_logging``).  
+  
+    Se o startup dos backends falhar de forma inesperada (bug real, não  
+    modelado como ``BackendError``), ``stop_all`` roda ANTES do log para que  
+    nenhum processo/conexão de backend fique órfão e o log final reflita o  
+    estado pós-cleanup.  
+    """  
     configure_logging(logging.INFO, force=True)  
     port_raw = os.environ.get("MCP_GATEWAY_PORT", str(DEFAULT_PORT))  
     try:  
@@ -64,8 +93,6 @@ async def main() -> int:
     except ValueError:  
         logger.error("MCP_GATEWAY_PORT inválido", value=port_raw)  
         return 1  
-    # 3.2 — porta fora do intervalo válido falharia dentro do uvicorn com um  
-    # erro obscuro; valida logo com mensagem clara e exit code consistente.  
     if not 1 <= port <= 65535:  
         logger.error(  
             "MCP_GATEWAY_PORT fora do intervalo válido (1-65535)", value=port_raw  
@@ -94,11 +121,6 @@ async def main() -> int:
         logger.error("falha ao iniciar os backends", error=str(exc))  
         return 1  
     except Exception:  
-        # 3.3 — falha inesperada (bug real, não modelada como BackendError):  
-        # nenhum processo/conexão de backend pode ficar órfão. O stop_all é  
-        # tolerante a falha por backend (ver BackendManager._teardown_client);  
-        # o cleanup roda ANTES do log para que o log final reflita o estado  
-        # pós-cleanup. A exceção original segue no logger.exception abaixo.  
         await backend_manager.stop_all()  
         logger.exception("falha inesperada ao iniciar os backends")  
         return 1  
@@ -121,42 +143,19 @@ async def main() -> int:
             host=_configured_host(),  
             port=port,  
             log_level="warning",  
-            # Access log do uvicorn emite a URL COMPLETA da request (incluindo  
-            # ``?token=...``) e é redundante com o ``http_request_completed``  
-            # estruturado (que não inclui URL). Desligado para o token de query  
-            # nunca vazar em log — ver nota de segurança no README.  
+            # O access log do uvicorn emite a URL COMPLETA da request (incluindo  
+            # ``?token=...``), redundante com o ``http_request_completed``  
+            # estruturado. Desligado para o token de query nunca vazar em log.  
             access_log=False,  
         )  
     )  
   
-    # Graceful shutdown (Fase 2): o uvicorn instala os handlers de SIGINT/SIGTERM  
-    # e, ao receber o sinal, apenas marca ``should_exit = True`` — o ``serve()``  
-    # retorna sem exceção. Por isso NÃO sobrescrevemos SIGINT/SIGTERM (isso  
-    # conflitaria com o próprio shutdown do uvicorn); apenas completamos com o  
-    # SIGBREAK do Windows (ver _install_sigbreak_handler). A ordem de  
-    # desligamento fica no ``finally``:  
-    # 1) health monitor (para de checar/reiniciar); 2) backends — ``stop_all``  
-    # encerra cada processo filho (stdin fechado → terminate → kill), sem  
-    # deixar órfãos; 3) o processo sai normalmente.  
     _install_sigbreak_handler(server)  
     try:  
         await server.serve()  
     except asyncio.CancelledError:  
-        # Cancelamento do ``main()`` pelo event loop em encerramento (ex.:  
-        # ``asyncio.run`` derrubando a task principal no shutdown, ou Ctrl+C  
-        # no Unix quando o loop propaga o cancelamento). É o mecanismo de  
-        # parada, não um erro: engolido APENAS aqui no entrypoint, depois de  
-        # o ``finally`` completar o cleanup — nunca nas camadas de baixo.  
         logger.info("gateway_shutdown_interrupted", reason="task cancelada pelo event loop")  
     except KeyboardInterrupt:  
-        # ``serve()`` pode propagar KeyboardInterrupt: o uvicorn captura o  
-        # SIGINT/SIGBREAK durante ``serve()``, mas ao sair de  
-        # ``capture_signals()`` REEMITE o sinal capturado com o handler  
-        # original restaurado — no Windows isso chega aqui como  
-        # KeyboardInterrupt. Sem este ``except``, o desfecho seria um  
-        # traceback de KeyboardInterrupt na tela mesmo com o shutdown  
-        # gracioso completando (os backends são finalizados no ``finally``  
-        # de qualquer forma; o que faltava era silenciar o traceback).  
         logger.info("gateway_shutdown_interrupted", reason="KeyboardInterrupt")  
     finally:  
         await _graceful_shutdown(health_monitor, session_purger, mcp_server)  
@@ -168,14 +167,19 @@ async def _graceful_shutdown(
     session_purger: SessionPurger,  
     mcp_server: McpServer,  
 ) -> None:  
-    """Ordem de desligamento, tolerante a cancelamento/erros.  
+    """Desliga os componentes em ordem, tolerando cancelamento e erros.  
   
-    1) health monitor (para de checar/reiniciar); 2) session purger;  
-    3) backends — ``stop_all`` encerra cada processo filho (stdin fechado →  
-    terminate → kill), sem deixar órfãos. Cada etapa é isolada: uma falha  
-    (incluído cancelamento do ``main()`` no meio do shutdown) não impede a  
-    seguinte de rodar. Emite ``gateway_shutdown_complete`` quando todos os  
-    passos terminam.  
+    Ordem: (1) Health Monitor (para de checar/reiniciar); (2) Session Purger;  
+    (3) backends — ``stop_all`` encerra cada processo filho (stdin fechado →  
+    terminate → kill), sem deixar órfãos. Cada etapa é isolada: uma falha —  
+    inclusive o cancelamento do ``main()`` no meio do shutdown — não impede a  
+    seguinte de rodar.  
+  
+    ``CancelledError`` recebido em qualquer etapa é registrado e RE-LANÇADO ao  
+    final (nunca engolido): engoli-lo mascararia um desligamento em andamento  
+    do event loop, mas propagá-lo no meio impediria os backends de serem  
+    finalizados. Emite ``gateway_shutdown_complete`` quando todos os passos  
+    terminam.  
     """  
     cancelled = False  
     try:  
@@ -208,6 +212,6 @@ if __name__ == "__main__":
     try:  
         sys.exit(asyncio.run(main()))  
     except (KeyboardInterrupt, asyncio.CancelledError):  
-        # Desfecho normal do Ctrl+C após o cleanup completo do ``main()``  
-        # (ver comentários em main()): encerra com código 0 e SEM traceback.  
+        # Desfecho normal do Ctrl+C após o cleanup completo do main():  
+        # encerra com código 0 e SEM traceback.  
         sys.exit(0)
