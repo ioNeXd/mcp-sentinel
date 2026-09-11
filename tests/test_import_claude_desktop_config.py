@@ -32,9 +32,7 @@ _spec.loader.exec_module(importer)
 
 def write_source(tmp_path: Path, mcp_servers: dict[str, Any]) -> Path:
     source = tmp_path / "claude_desktop_config.json"
-    source.write_text(
-        json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False), encoding="utf-8"
-    )
+    source.write_text(json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False), encoding="utf-8")
     return source
 
 
@@ -120,7 +118,10 @@ def test_variacoes_de_ponte_sao_detectadas(tmp_path: Path) -> None:
     source = write_source(
         tmp_path,
         {
-            "via-supergateway": {"command": "npx", "args": ["-y", "supergateway", "--url", "http://x"]},
+            "via-supergateway": {
+                "command": "npx",
+                "args": ["-y", "supergateway", "--url", "http://x"],
+            },
             "via-proxy": {"command": "python", "args": ["-m", "mcp_proxy", "http://x"]},
             "via-nome-remoto": {"command": "meu-tunnel-remote.exe", "args": []},
         },
@@ -264,9 +265,7 @@ def test_campos_desconhecidos_geram_aviso(tmp_path: Path) -> None:
 # ----------------------------------------------------------------------
 
 
-def _run_cli(
-    source: Path, capsys: pytest.CaptureFixture[str], *args: str
-) -> tuple[int, str, str]:
+def _run_cli(source: Path, capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str, str]:
     """Roda main(argv) capturando stdout/stderr (fixture capsys do pytest)."""
     exit_code = importer.main([str(source), *args])
     captured = capsys.readouterr()

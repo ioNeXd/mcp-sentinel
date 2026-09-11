@@ -252,7 +252,10 @@ async def test_restart_de_backend_morto_durante_os_ciclos_do_monitor() -> None:
         await factory.created[0].stop()  # processo morre
         # O monitor precisa detectar e reiniciar sem intervenção.
         for _ in range(20):
-            if manager.status_of("backend-a") is BackendStatus.RUNNING and len(factory.created) >= 2:
+            if (
+                manager.status_of("backend-a") is BackendStatus.RUNNING
+                and len(factory.created) >= 2
+            ):
                 break
             await asyncio.sleep(0.03)
         assert manager.status_of("backend-a") is BackendStatus.RUNNING

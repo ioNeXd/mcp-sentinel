@@ -1,3 +1,3 @@
-"""MCP Gateway — lobby/router que agrega servidores MCP em um único endpoint."""  
-  
+"""MCP Gateway — lobby/router que agrega servidores MCP em um único endpoint."""
+
 from .version import __version__ as __version__

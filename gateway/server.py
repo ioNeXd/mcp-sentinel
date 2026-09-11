@@ -1,632 +1,661 @@
-"""McpServer: camada de protocolo JSON-RPC do Gateway (agregação de backends).  
-  
-Recebe o envelope JSON-RPC já parseado (dict), valida o envelope, despacha para  
-os handlers de tools/resources/prompts e devolve a resposta JSON-RPC. Nunca faz  
-I/O direto além das chamadas aos backends, e o acesso aos clients é sempre via  
-BackendManager (camada de roteamento), nunca direto a um Client — regra de  
-camadas do AGENT_INSTRUCTIONS.  
-  
-Filtro seletivo por sessão (Fase 5, extensão fora do spec MCP)  
---------------------------------------------------------------  
-Três métodos JSON-RPC próprios do Gateway permitem restringir quais backends  
-uma sessão enxerga:  
-  
-- ``gateway/session/set_active_backends``  
-- ``gateway/session/get_active_backends``  
-- ``gateway/session/clear_active_backends``  
-  
-A sessão é identificada pelo header HTTP ``Mcp-Session-Id`` (ver  
-``SESSION_HEADER``). Sessão sem filtro vê TUDO — comportamento default,  
-compatível com qualquer cliente que não conheça a extensão. O filtro é uma VIEW  
-calculada na hora de responder: os registries globais continuam sendo a fonte  
-única de verdade, sem cópia de dados.  
-  
-Tabela de erros (também documentada no README)  
-----------------------------------------------  
-- Envelope malformado / campo obrigatório ausente -> InvalidRequest (-32600).  
-  A ausência de ``method``/``jsonrpc`` é Request inválido, não InvalidParams —  
-  este fica reservado a parâmetros inválidos de um método conhecido.  
-- Method desconhecido -> MethodNotFound (-32601).  
-- tool/resource/prompt namespaced inexistente -> ITEM_NOT_FOUND (-32001).  
-- Falha do backend durante a chamada -> BACKEND_UNAVAILABLE (-32002).  
-- Erros JSON-RPC vindos do backend são repassados com o código original.  
-"""  
-  
-import json  
-import time  
-from typing import Any  
-  
-import structlog  
-from pydantic import ValidationError  
-  
-from gateway import __version__  
-from gateway.backend_manager import BackendManager  
-from gateway.errors import BackendError, BackendJsonRpcError  
-from gateway.models import (  
-    BACKEND_UNAVAILABLE,  
-    INVALID_PARAMS,  
-    INVALID_REQUEST,  
-    ITEM_NOT_FOUND,  
-    METHOD_NOT_FOUND,  
-    PROTOCOL_VERSION,  # noqa: F401 — re-export de compatibilidade (não usado aqui)  
-    JsonRpcRequest,  
-    make_error,  
-    make_result,  
-    negotiate_protocol_version,  
-)  
-from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry  
-from gateway.registries.base import RegistryEntry  
-from gateway.sessions import SESSION_HEADER, SessionFilter, normalize_session_id  
-  
-logger = structlog.get_logger(__name__)  
-  
-SERVER_NAME = "mcp-gateway"  
-SERVER_VERSION = __version__  
-  
-# Divisor heurístico para estimar tokens a partir de caracteres JSON (~4 chars  
-# por token). Estimativa grosseira de diagnóstico, não substitui um tokenizer  
-# real (ver GET /api/tools/size no README).  
-APPROX_CHARS_PER_TOKEN = 4  
-  
-# TTL default do filtro de sessão quando nenhum SessionFilter é injetado.  
-# Em produção main.py sempre injeta o filtro configurado; este default mantém  
-# os construtores de teste simples.  
-_DEFAULT_SESSION_TTL_SECONDS = 3600.0  
-  
-  
-class McpServer:  
-    """Agrega N backends MCP atrás de um único endpoint JSON-RPC.  
-  
-    Tools, resources e prompts de cada backend são expostos com namespace  
-    ``backend.<id original>``; o roteamento de ``tools/call``,  
-    ``resources/read`` e ``prompts/get`` devolve cada chamada ao backend  
-    correto com o identificador original.  
-  
-    Attributes:  
-        backend_manager: Dono do ciclo de vida dos backends; usado para  
-            iniciar/parar tudo e para resolver o client ativo de cada chamada  
-            (reflete restarts sem precisar reiniciar o Gateway).  
-        registries: Registries agregados mantidos em sincronia com os backends  
-            vivos pelo BackendManager.  
-        sessions: Filtro seletivo de backends por sessão (Fase 5). Sessão sem  
-            filtro vê tudo — comportamento default idêntico ao das fases  
-            anteriores.  
-    """  
-  
-    def __init__(  
-        self,  
-        backend_manager: BackendManager,  
-        registries: tuple[ToolRegistry, ResourceRegistry, PromptRegistry],  
-        session_filter: SessionFilter | None = None,  
-    ) -> None:  
-        self.backend_manager = backend_manager  
-        self.registries = registries  
-        self._tools, self._resources, self._prompts = registries  
-        self.sessions = (  
-            session_filter  
-            if session_filter is not None  
-            else SessionFilter(_DEFAULT_SESSION_TTL_SECONDS)  
-        )  
-  
-    async def start(self) -> None:  
-        """Sobe todos os backends via BackendManager (handshake + registries)."""  
-        await self.backend_manager.start_all()  
-        logger.info(  
-            "gateway_ready",  
-            backends=len(self.backend_manager.all_states()),  
-            tools=len(self._tools.list_all()),  
-            resources=len(self._resources.list_all()),  
-            prompts=len(self._prompts.list_all()),  
-        )  
-  
-    async def stop(self) -> None:  
-        """Encerra todos os backends via BackendManager (idempotente)."""  
-        await self.backend_manager.stop_all()  
-  
-    # ------------------------------------------------------------------  
-    # Processamento do envelope JSON-RPC  
-    # ------------------------------------------------------------------  
-  
-    async def process_message(  
-        self, raw_body: dict[str, Any], session_id: str | None = None  
-    ) -> dict[str, Any] | None:  
-        """Processa um request JSON-RPC e devolve a resposta (``None`` p/ notificação).  
-  
-        ``session_id`` vem do header ``Mcp-Session-Id`` (ver ``SESSION_HEADER``);  
-        sem header, ``None`` — e sem sessão não há filtro (comportamento default,  
-        compatível com qualquer cliente MCP). O id é normalizado antes de  
-        qualquer uso: acima do tamanho máximo ou fora do charset permitido vira  
-        ``None`` ("sem sessão"), de modo que o valor cru do header nunca vira  
-        chave de dict nem entra em log.  
-  
-        Um envelope com ``id`` ausente é notificação e não gera resposta; ``id``  
-        presente (inclusive ``null`` explícito) sempre gera resposta, com o id  
-        ecoado automaticamente por ``make_result``/``make_error``.  
-        """  
-        started = time.perf_counter()  
-        session_id = normalize_session_id(session_id)  
-        request_id = self._extract_id(raw_body)  
-        envelope_error = self._envelope_error(raw_body, request_id)  
-        if envelope_error is not None:  
-            logger.warning("jsonrpc_invalid_request", id=request_id, reason=envelope_error)  
-            return make_error(request_id, INVALID_REQUEST, f"Invalid Request: {envelope_error}")  
-        try:  
-            request = JsonRpcRequest.model_validate(raw_body)  
-        except ValidationError as exc:  
-            logger.warning("jsonrpc_invalid_request", id=request_id, reason=str(exc))  
-            return make_error(request_id, INVALID_REQUEST, "Invalid Request")  
-        if request.id_present is False:  
-            return None  
-        logger.info(  
-            "jsonrpc_request_received", method=request.method, id=request.id, session_id=session_id  
-        )  
-        response = await self._dispatch(request, session_id)  
-        if response is None:  
-            return None  
-        duration_ms = round((time.perf_counter() - started) * 1000, 1)  
-        error = response.get("error")  
-        if error is not None:  
-            logger.warning(  
-                "jsonrpc_request_error",  
-                method=request.method,  
-                id=request.id,  
-                code=error.get("code"),  
-                duration_ms=duration_ms,  
-            )  
-        else:  
-            logger.info(  
-                "jsonrpc_request_ok",  
-                method=request.method,  
-                id=request.id,  
-                duration_ms=duration_ms,  
-            )  
-        return response  
-  
-    async def _dispatch(  
-        self, request: JsonRpcRequest, session_id: str | None = None  
-    ) -> dict[str, Any] | None:  
-        """Roteia o request pelo ``method`` para o handler correspondente."""  
-        if request.method == "initialize":  
-            return self._handle_initialize(request)  
-        if request.method == "ping":  
-            return make_result(request.id, {})  
-        if request.method == "gateway/session/set_active_backends":  
-            return self._handle_set_active_backends(request, session_id)  
-        if request.method == "gateway/session/get_active_backends":  
-            return self._handle_get_active_backends(request, session_id)  
-        if request.method == "gateway/session/clear_active_backends":  
-            return self._handle_clear_active_backends(request, session_id)  
-        if request.method == "tools/list":  
-            return make_result(  
-                request.id,  
-                {  
-                    "tools": [  
-                        payload  
-                        for entry in self._visible(self._tools.list_all(), session_id)  
-                        if (payload := self._tool_payload(entry)) is not None  
-                    ]  
-                },  
-            )  
-        if request.method == "resources/list":  
-            return make_result(  
-                request.id,  
-                {  
-                    "resources": [  
-                        payload  
-                        for entry in self._visible(self._resources.list_all(), session_id)  
-                        if (payload := self._resource_payload(entry)) is not None  
-                    ]  
-                },  
-            )  
-        if request.method == "prompts/list":  
-            return make_result(  
-                request.id,  
-                {  
-                    "prompts": [  
-                        payload  
-                        for entry in self._visible(self._prompts.list_all(), session_id)  
-                        if (payload := self._prompt_payload(entry)) is not None  
-                    ]  
-                },  
-            )  
-        if request.method == "tools/call":  
-            return await self._handle_tools_call(request, session_id)  
-        if request.method == "resources/read":  
-            return await self._handle_resource_read(request, session_id)  
-        if request.method == "prompts/get":  
-            return await self._handle_prompt_get(request, session_id)  
-        return make_error(request.id, METHOD_NOT_FOUND, f"Method not found: {request.method}")  
-  
-    def _handle_initialize(self, request: JsonRpcRequest) -> dict[str, Any]:  
-        """Responde ao handshake ``initialize`` do MCP.  
-  
-        Valida ``protocolVersion`` (string não vazia), ``capabilities`` (objeto)  
-        e ``clientInfo`` (objeto com ``name``/``version`` string não vazia);  
-        qualquer violação é InvalidParams (-32602). A versão é negociada por  
-        ``negotiate_protocol_version`` — versão incompatível também é  
-        InvalidParams. A resposta anuncia as capabilities do Gateway (tools,  
-        resources e prompts, todas sem ``listChanged``) e o ``serverInfo``.  
-        """  
-        params = request.params  
-        if not isinstance(params, dict):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid Params: params deve ser objeto")  
-        protocol_version = params.get("protocolVersion")  
-        capabilities = params.get("capabilities")  
-        client_info = params.get("clientInfo")  
-        if not isinstance(protocol_version, str) or not protocol_version:  
-            return make_error(request.id, INVALID_PARAMS, "Invalid Params: protocolVersion obrigatório (string)")  
-        if not isinstance(capabilities, dict):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid Params: capabilities obrigatório (objeto)")  
-        if not isinstance(client_info, dict):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid Params: clientInfo obrigatório (objeto)")  
-        if (  
-            not isinstance(client_info.get("name"), str)  
-            or not client_info["name"]  
-            or not isinstance(client_info.get("version"), str)  
-            or not client_info["version"]  
-        ):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid Params: clientInfo.name e clientInfo.version obrigatórios (strings)")  
-        negotiated = negotiate_protocol_version(protocol_version)  
-        if negotiated is None:  
-            return make_error(request.id, INVALID_PARAMS, f"Invalid Params: versão de protocolo não suportada: {protocol_version}")  
-        return make_result(  
-            request.id,  
-            {  
-                "protocolVersion": negotiated,  
-                "capabilities": {  
-                    "tools": {"listChanged": False},  
-                    "resources": {"subscribe": False, "listChanged": False},  
-                    "prompts": {"listChanged": False},  
-                },  
-                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},  
-            },  
-        )  
-  
-    # ------------------------------------------------------------------  
-    # Filtro seletivo por sessão (Fase 5)  
-    # ------------------------------------------------------------------  
-  
-    def _visible(  
-        self, entries: list[RegistryEntry], session_id: str | None  
-    ) -> list[RegistryEntry]:  
-        """Filtra as entries do registry pela sessão (view, sem copiar dados).  
-  
-        Sem sessão ou sem filtro devolve a lista completa (idêntico ao  
-        comportamento das fases anteriores). O acesso renova o TTL da sessão.  
-        """  
-        allowed = self.sessions.active_backends(session_id)  
-        if allowed is None:  
-            return entries  
-        return [entry for entry in entries if entry.backend in allowed]  
-  
-    def _backend_allowed(self, backend: str, session_id: str | None) -> bool:  
-        """Indica se a sessão pode chamar itens deste backend (``None`` = sem filtro)."""  
-        allowed = self.sessions.active_backends(session_id)  
-        return allowed is None or backend in allowed  
-  
-    def _handle_set_active_backends(  
-        self, request: JsonRpcRequest, session_id: str | None  
-    ) -> dict[str, Any]:  
-        """Extensão: define o subconjunto de backends visível à sessão.  
-  
-        Params: ``{"backends": ["backend-a", ...]}`` (lista não vazia de nomes  
-        existentes no config). Retorna InvalidParams (-32602) se o payload for  
-        malformado ou citar backend desconhecido — falha explícita, nunca filtro  
-        parcial silencioso. Exige o header de sessão; sem ele é InvalidRequest.  
-        """  
-        if session_id is None:  
-            return make_error(  
-                request.id,  
-                INVALID_REQUEST,  
-                f"Invalid Request: extensão de sessão exige o header {SESSION_HEADER}",  
-            )  
-        params = self._require_object_params(request)  
-        if params is None:  
-            return make_error(  
-                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"  
-            )  
-        raw = params.get("backends")  
-        if (  
-            not isinstance(raw, list)  
-            or not raw  
-            or not all(isinstance(name, str) and name for name in raw)  
-        ):  
-            return make_error(  
-                request.id,  
-                INVALID_PARAMS,  
-                "Invalid params: 'backends' deve ser uma lista não vazia de nomes de backend",  
-            )  
-        known = set(self.backend_manager.all_states())  
-        unknown = sorted(set(raw) - known)  
-        if unknown:  
-            return make_error(  
-                request.id,  
-                INVALID_PARAMS,  
-                f"Invalid params: backends desconhecidos: {', '.join(unknown)}",  
-                data={"known_backends": sorted(known)},  
-            )  
-        self.sessions.set_active_backends(session_id, frozenset(raw))  
-        return make_result(request.id, {"active_backends": sorted(set(raw))})  
-  
-    def _handle_get_active_backends(  
-        self, request: JsonRpcRequest, session_id: str | None  
-    ) -> dict[str, Any]:  
-        """Extensão: lista os backends ativos da sessão (``null`` = sem filtro)."""  
-        active = self.sessions.active_backends(session_id)  
-        return make_result(  
-            request.id,  
-            {  
-                "active_backends": sorted(active) if active is not None else None,  
-                "filtered": active is not None,  
-            },  
-        )  
-  
-    def _handle_clear_active_backends(  
-        self, request: JsonRpcRequest, session_id: str | None  
-    ) -> dict[str, Any]:  
-        """Extensão: remove o filtro — a sessão volta a ver todos os backends."""  
-        if session_id is not None:  
-            self.sessions.clear(session_id)  
-        return make_result(request.id, {"active_backends": None, "filtered": False})  
-  
-    # ------------------------------------------------------------------  
-    # Handlers de chamada (roteamento por namespace)  
-    # ------------------------------------------------------------------  
-  
-    async def _handle_tools_call(  
-        self, request: JsonRpcRequest, session_id: str | None = None  
-    ) -> dict[str, Any]:  
-        params = self._require_object_params(request)  
-        if params is None:  
-            return make_error(  
-                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"  
-            )  
-        tool_name = params.get("name")  
-        if not isinstance(tool_name, str) or not tool_name:  
-            return make_error(request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório")  
-        arguments = params.get("arguments")  
-        if arguments is not None and not isinstance(arguments, dict):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid params: 'arguments' deve ser um objeto")  
-        entry = self._tools.get(tool_name)  
-        if entry is None:  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown tool: {tool_name}")  
-        if not self._backend_allowed(entry.backend, session_id):  
-            logger.info(  
-                "request_blocked_by_session_filter",  
-                method="tools/call",  
-                item=entry.namespaced,  
-                session_id=session_id,  
-            )  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown tool: {tool_name}")  
-        logger.info("request_dispatched", method="tools/call", item=entry.namespaced, backend=entry.backend)  
-        call_params = dict(params)  
-        call_params["name"] = entry.name  
-        call_params["arguments"] = arguments or {}  
-        return await self._call_backend(request.id, entry, "tools/call", call_params)  
-  
-    async def _handle_resource_read(  
-        self, request: JsonRpcRequest, session_id: str | None = None  
-    ) -> dict[str, Any]:  
-        params = self._require_object_params(request)  
-        if params is None:  
-            return make_error(  
-                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"  
-            )  
-        uri = params.get("uri")  
-        if not isinstance(uri, str) or not uri:  
-            return make_error(request.id, INVALID_PARAMS, "Invalid params: 'uri' (string) é obrigatório")  
-        entry = self._resources.get(uri)  
-        if entry is None:  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown resource: {uri}")  
-        if not self._backend_allowed(entry.backend, session_id):  
-            logger.info(  
-                "request_blocked_by_session_filter",  
-                method="resources/read",  
-                item=entry.namespaced,  
-                session_id=session_id,  
-            )  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown resource: {uri}")  
-        logger.info("request_dispatched", method="resources/read", item=entry.namespaced, backend=entry.backend)  
-        call_params = dict(params)  
-        call_params["uri"] = entry.name  
-        result = await self._call_backend(request.id, entry, "resources/read", call_params)  
-        if result.get("error") is None and isinstance(result.get("result"), dict):  
-            result = dict(result)  
-            result["result"] = self._namespace_content_uris(  
-                result["result"], entry.backend, entry.name  
-            )  
-        return result  
-  
-    async def _handle_prompt_get(  
-        self, request: JsonRpcRequest, session_id: str | None = None  
-    ) -> dict[str, Any]:  
-        params = self._require_object_params(request)  
-        if params is None:  
-            return make_error(  
-                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"  
-            )  
-        prompt_name = params.get("name")  
-        if not isinstance(prompt_name, str) or not prompt_name:  
-            return make_error(request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório")  
-        arguments = params.get("arguments")  
-        if arguments is not None and not isinstance(arguments, dict):  
-            return make_error(request.id, INVALID_PARAMS, "Invalid params: 'arguments' deve ser um objeto")  
-        entry = self._prompts.get(prompt_name)  
-        if entry is None:  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown prompt: {prompt_name}")  
-        if not self._backend_allowed(entry.backend, session_id):  
-            logger.info(  
-                "request_blocked_by_session_filter",  
-                method="prompts/get",  
-                item=entry.namespaced,  
-                session_id=session_id,  
-            )  
-            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown prompt: {prompt_name}")  
-        logger.info("request_dispatched", method="prompts/get", item=entry.namespaced, backend=entry.backend)  
-        call_params = dict(params)  
-        call_params["name"] = entry.name  
-        if arguments is not None:  
-            call_params["arguments"] = arguments  
-        return await self._call_backend(request.id, entry, "prompts/get", call_params)  
-  
-    async def _call_backend(  
-        self,  
-        request_id: int | str | None,  
-        entry: RegistryEntry,  
-        method: str,  
-        params: dict[str, Any],  
-    ) -> dict[str, Any]:  
-        """Encaminha a chamada ao backend e traduz falhas em erro JSON-RPC.  
-  
-        O client ativo é resolvido no BackendManager a cada chamada — se o  
-        backend estiver offline/restartando, a chamada vira BACKEND_UNAVAILABLE  
-        sem afetar o Gateway. Erros JSON-RPC do backend são repassados com o  
-        código original; falhas de transporte (timeout, processo morto etc.)  
-        viram BACKEND_UNAVAILABLE.  
-        """  
-        try:  
-            client = self.backend_manager.get_client(entry.backend)  
-            result = await client.send_request(method, params)  
-        except BackendJsonRpcError as exc:  
-            logger.warning(  
-                "backend_jsonrpc_error",  
-                backend=entry.backend,  
-                method=method,  
-                code=exc.code,  
-                message=exc.message,  
-            )  
-            return make_error(request_id, exc.code, exc.message, data=exc.data)  
-        except BackendError as exc:  
-            logger.warning(  
-                "backend_unavailable", backend=entry.backend, method=method, error=str(exc)  
-            )  
-            return make_error(  
-                request_id, BACKEND_UNAVAILABLE, f"Backend '{entry.backend}' indisponível"  
-            )  
-        return make_result(request_id, result)  
-  
-    # ------------------------------------------------------------------  
-    # Helpers de validação/serialização  
-    # ------------------------------------------------------------------  
-  
-    def tools_list_size(self, session_id: str | None = None) -> dict[str, Any]:  
-        """Diagnóstico (Fase 5): tamanho do ``tools/list`` desta sessão/all.  
-  
-        Estimativa simples por caracteres (``len(json.dumps)``) e tokens  
-        aproximados (chars/4, heurística grosseira — não é tokenizer real).  
-        Serve para decidir na prática se o filtro seletivo vale a pena para um  
-        config específico (ver GET /api/tools/size no README).  
-        """  
-        entries = self._visible(self._tools.list_all(), session_id)  
-        payloads = [  
-            payload  
-            for entry in entries  
-            if (payload := self._tool_payload(entry)) is not None  
-        ]  
-        serialized = json.dumps({"tools": payloads}, ensure_ascii=False)  
-        per_backend: dict[str, int] = {}  
-        for entry, payload in zip(entries, payloads):  
-            per_backend[entry.backend] = per_backend.get(entry.backend, 0) + len(  
-                json.dumps(payload, ensure_ascii=False)  
-            )  
-        filtered = self.sessions.active_backends(session_id) is not None  
-        return {  
-            "tools_count": len(entries),  
-            "json_chars": len(serialized),  
-            "approx_tokens": len(serialized) // APPROX_CHARS_PER_TOKEN,  
-            "per_backend_chars": dict(sorted(per_backend.items())),  
-            "session_id": session_id,  
-            "filtered": filtered,  
-        }  
-  
-    @staticmethod  
-    def _extract_id(raw_body: dict[str, Any]) -> int | str | None:  
-        """Extrai o ``id`` do envelope; ``bool`` e tipos inválidos viram ``None``."""  
-        candidate = raw_body.get("id")  
-        if isinstance(candidate, bool):  
-            return None  
-        return candidate if isinstance(candidate, (int, str)) else None  
-  
-    @staticmethod  
-    def _require_object_params(request: JsonRpcRequest) -> dict[str, Any] | None:  
-        """Retorna ``params`` como objeto; ausência ou tipo não-objeto vira ``None``."""  
-        if isinstance(request.params, dict):  
-            return request.params  
-        return None  
-  
-    @staticmethod  
-    def _envelope_error(raw_body: dict[str, Any], request_id: int | str | None) -> str | None:  
-        """Valida o envelope JSON-RPC; devolve mensagem de erro ou ``None`` se válido."""  
-        if raw_body.get("id") is not None and request_id is None:  
-            return "'id' deve ser uma string ou número"  
-        if raw_body.get("jsonrpc") != "2.0":  
-            return "'jsonrpc' ausente ou inválido (deve ser \"2.0\")"  
-        method = raw_body.get("method")  
-        if not isinstance(method, str) or not method:  
-            return "'method' ausente ou inválido (deve ser string não vazia)"  
-        return None  
-  
-    @staticmethod  
-    def _tool_payload(entry: RegistryEntry) -> dict[str, Any] | None:  
-        """Payload de uma tool com ``name`` namespaced; ``None`` se metadata inválida."""  
-        if not isinstance(entry.metadata.get("description"), str):  
-            logger.warning(  
-                "backend_item_omitido",  
-                kind="tool",  
-                item=entry.namespaced,  
-                reason="description inválida",  
-            )  
-            return None  
-        payload = dict(entry.metadata)  
-        payload["name"] = entry.namespaced  
-        return payload  
-  
-    @staticmethod  
-    def _resource_payload(entry: RegistryEntry) -> dict[str, Any] | None:  
-        """Payload de um resource com ``uri`` namespaced; ``None`` se metadata inválida."""  
-        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:  
-            logger.warning(  
-                "backend_item_omitido",  
-                kind="resource",  
-                item=entry.namespaced,  
-                reason="name inválido",  
-            )  
-            return None  
-        payload = dict(entry.metadata)  
-        payload["uri"] = entry.namespaced  
-        return payload  
-  
-    @staticmethod  
-    def _prompt_payload(entry: RegistryEntry) -> dict[str, Any] | None:  
-        """Payload de um prompt com ``name`` namespaced; ``None`` se metadata inválida."""  
-        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:  
-            logger.warning(  
-                "backend_item_omitido",  
-                kind="prompt",  
-                item=entry.namespaced,  
-                reason="name inválido",  
-            )  
-            return None  
-        payload = dict(entry.metadata)  
-        payload["name"] = entry.namespaced  
-        return payload  
-  
-    @staticmethod  
-    def _namespace_content_uris(  
-        result: dict[str, Any], backend: str, original_uri: str  
-    ) -> dict[str, Any]:  
-        """Reescreve a ``uri`` original dos ``contents`` para o formato namespaced.  
-  
-        Mantém o round-trip: o cliente devolve a uri que o Gateway anunciou no  
-        ``resources/list`` e o backend recebe/devolve a uri original.  
-        """  
-        contents = result.get("contents")  
-        if not isinstance(contents, list):  
-            return result  
-        rewritten = []  
-        for item in contents:  
-            if isinstance(item, dict) and item.get("uri") == original_uri:  
-                item = dict(item)  
-                item["uri"] = f"{backend}.{item['uri']}"  
-            rewritten.append(item)  
+"""McpServer: camada de protocolo JSON-RPC do Gateway (agregação de backends).
+
+Recebe o envelope JSON-RPC já parseado (dict), valida o envelope, despacha para
+os handlers de tools/resources/prompts e devolve a resposta JSON-RPC. Nunca faz
+I/O direto além das chamadas aos backends, e o acesso aos clients é sempre via
+BackendManager (camada de roteamento), nunca direto a um Client — regra de
+camadas do AGENT_INSTRUCTIONS.
+
+Filtro seletivo por sessão (Fase 5, extensão fora do spec MCP)
+--------------------------------------------------------------
+Três métodos JSON-RPC próprios do Gateway permitem restringir quais backends
+uma sessão enxerga:
+
+- ``gateway/session/set_active_backends``
+- ``gateway/session/get_active_backends``
+- ``gateway/session/clear_active_backends``
+
+A sessão é identificada pelo header HTTP ``Mcp-Session-Id`` (ver
+``SESSION_HEADER``). Sessão sem filtro vê TUDO — comportamento default,
+compatível com qualquer cliente que não conheça a extensão. O filtro é uma VIEW
+calculada na hora de responder: os registries globais continuam sendo a fonte
+única de verdade, sem cópia de dados.
+
+Tabela de erros (também documentada no README)
+----------------------------------------------
+- Envelope malformado / campo obrigatório ausente -> InvalidRequest (-32600).
+  A ausência de ``method``/``jsonrpc`` é Request inválido, não InvalidParams —
+  este fica reservado a parâmetros inválidos de um método conhecido.
+- Method desconhecido -> MethodNotFound (-32601).
+- tool/resource/prompt namespaced inexistente -> ITEM_NOT_FOUND (-32001).
+- Falha do backend durante a chamada -> BACKEND_UNAVAILABLE (-32002).
+- Erros JSON-RPC vindos do backend são repassados com o código original.
+"""
+
+import json
+import time
+from typing import Any
+
+import structlog
+from pydantic import ValidationError
+
+from gateway import __version__
+from gateway.backend_manager import BackendManager
+from gateway.errors import BackendError, BackendJsonRpcError
+from gateway.models import (
+    BACKEND_UNAVAILABLE,
+    INVALID_PARAMS,
+    INVALID_REQUEST,
+    ITEM_NOT_FOUND,
+    METHOD_NOT_FOUND,
+    PROTOCOL_VERSION,  # noqa: F401 — re-export de compatibilidade (não usado aqui)
+    JsonRpcRequest,
+    make_error,
+    make_result,
+    negotiate_protocol_version,
+)
+from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
+from gateway.registries.base import RegistryEntry
+from gateway.sessions import SESSION_HEADER, SessionFilter, normalize_session_id
+
+logger = structlog.get_logger(__name__)
+
+SERVER_NAME = "mcp-gateway"
+SERVER_VERSION = __version__
+
+# Divisor heurístico para estimar tokens a partir de caracteres JSON (~4 chars
+# por token). Estimativa grosseira de diagnóstico, não substitui um tokenizer
+# real (ver GET /api/tools/size no README).
+APPROX_CHARS_PER_TOKEN = 4
+
+# TTL default do filtro de sessão quando nenhum SessionFilter é injetado.
+# Em produção main.py sempre injeta o filtro configurado; este default mantém
+# os construtores de teste simples.
+_DEFAULT_SESSION_TTL_SECONDS = 3600.0
+
+
+class McpServer:
+    """Agrega N backends MCP atrás de um único endpoint JSON-RPC.
+
+    Tools, resources e prompts de cada backend são expostos com namespace
+    ``backend.<id original>``; o roteamento de ``tools/call``,
+    ``resources/read`` e ``prompts/get`` devolve cada chamada ao backend
+    correto com o identificador original.
+
+    Attributes:
+        backend_manager: Dono do ciclo de vida dos backends; usado para
+            iniciar/parar tudo e para resolver o client ativo de cada chamada
+            (reflete restarts sem precisar reiniciar o Gateway).
+        registries: Registries agregados mantidos em sincronia com os backends
+            vivos pelo BackendManager.
+        sessions: Filtro seletivo de backends por sessão (Fase 5). Sessão sem
+            filtro vê tudo — comportamento default idêntico ao das fases
+            anteriores.
+    """
+
+    def __init__(
+        self,
+        backend_manager: BackendManager,
+        registries: tuple[ToolRegistry, ResourceRegistry, PromptRegistry],
+        session_filter: SessionFilter | None = None,
+    ) -> None:
+        self.backend_manager = backend_manager
+        self.registries = registries
+        self._tools, self._resources, self._prompts = registries
+        self.sessions = (
+            session_filter
+            if session_filter is not None
+            else SessionFilter(_DEFAULT_SESSION_TTL_SECONDS)
+        )
+
+    async def start(self) -> None:
+        """Sobe todos os backends via BackendManager (handshake + registries)."""
+        await self.backend_manager.start_all()
+        logger.info(
+            "gateway_ready",
+            backends=len(self.backend_manager.all_states()),
+            tools=len(self._tools.list_all()),
+            resources=len(self._resources.list_all()),
+            prompts=len(self._prompts.list_all()),
+        )
+
+    async def stop(self) -> None:
+        """Encerra todos os backends via BackendManager (idempotente)."""
+        await self.backend_manager.stop_all()
+
+    # ------------------------------------------------------------------
+    # Processamento do envelope JSON-RPC
+    # ------------------------------------------------------------------
+
+    async def process_message(
+        self, raw_body: dict[str, Any], session_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Processa um request JSON-RPC e devolve a resposta (``None`` p/ notificação).
+
+        ``session_id`` vem do header ``Mcp-Session-Id`` (ver ``SESSION_HEADER``);
+        sem header, ``None`` — e sem sessão não há filtro (comportamento default,
+        compatível com qualquer cliente MCP). O id é normalizado antes de
+        qualquer uso: acima do tamanho máximo ou fora do charset permitido vira
+        ``None`` ("sem sessão"), de modo que o valor cru do header nunca vira
+        chave de dict nem entra em log.
+
+        Um envelope com ``id`` ausente é notificação e não gera resposta; ``id``
+        presente (inclusive ``null`` explícito) sempre gera resposta, com o id
+        ecoado automaticamente por ``make_result``/``make_error``.
+        """
+        started = time.perf_counter()
+        session_id = normalize_session_id(session_id)
+        request_id = self._extract_id(raw_body)
+        envelope_error = self._envelope_error(raw_body, request_id)
+        if envelope_error is not None:
+            logger.warning("jsonrpc_invalid_request", id=request_id, reason=envelope_error)
+            return make_error(request_id, INVALID_REQUEST, f"Invalid Request: {envelope_error}")
+        try:
+            request = JsonRpcRequest.model_validate(raw_body)
+        except ValidationError as exc:
+            logger.warning("jsonrpc_invalid_request", id=request_id, reason=str(exc))
+            return make_error(request_id, INVALID_REQUEST, "Invalid Request")
+        if request.id_present is False:
+            return None
+        logger.info(
+            "jsonrpc_request_received", method=request.method, id=request.id, session_id=session_id
+        )
+        response = await self._dispatch(request, session_id)
+        if response is None:
+            return None
+        duration_ms = round((time.perf_counter() - started) * 1000, 1)
+        error = response.get("error")
+        if error is not None:
+            logger.warning(
+                "jsonrpc_request_error",
+                method=request.method,
+                id=request.id,
+                code=error.get("code"),
+                duration_ms=duration_ms,
+            )
+        else:
+            logger.info(
+                "jsonrpc_request_ok",
+                method=request.method,
+                id=request.id,
+                duration_ms=duration_ms,
+            )
+        return response
+
+    async def _dispatch(
+        self, request: JsonRpcRequest, session_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Roteia o request pelo ``method`` para o handler correspondente."""
+        if request.method == "initialize":
+            return self._handle_initialize(request)
+        if request.method == "ping":
+            return make_result(request.id, {})
+        if request.method == "gateway/session/set_active_backends":
+            return self._handle_set_active_backends(request, session_id)
+        if request.method == "gateway/session/get_active_backends":
+            return self._handle_get_active_backends(request, session_id)
+        if request.method == "gateway/session/clear_active_backends":
+            return self._handle_clear_active_backends(request, session_id)
+        if request.method == "tools/list":
+            return make_result(
+                request.id,
+                {
+                    "tools": [
+                        payload
+                        for entry in self._visible(self._tools.list_all(), session_id)
+                        if (payload := self._tool_payload(entry)) is not None
+                    ]
+                },
+            )
+        if request.method == "resources/list":
+            return make_result(
+                request.id,
+                {
+                    "resources": [
+                        payload
+                        for entry in self._visible(self._resources.list_all(), session_id)
+                        if (payload := self._resource_payload(entry)) is not None
+                    ]
+                },
+            )
+        if request.method == "prompts/list":
+            return make_result(
+                request.id,
+                {
+                    "prompts": [
+                        payload
+                        for entry in self._visible(self._prompts.list_all(), session_id)
+                        if (payload := self._prompt_payload(entry)) is not None
+                    ]
+                },
+            )
+        if request.method == "tools/call":
+            return await self._handle_tools_call(request, session_id)
+        if request.method == "resources/read":
+            return await self._handle_resource_read(request, session_id)
+        if request.method == "prompts/get":
+            return await self._handle_prompt_get(request, session_id)
+        return make_error(request.id, METHOD_NOT_FOUND, f"Method not found: {request.method}")
+
+    def _handle_initialize(self, request: JsonRpcRequest) -> dict[str, Any]:
+        """Responde ao handshake ``initialize`` do MCP.
+
+        Valida ``protocolVersion`` (string não vazia), ``capabilities`` (objeto)
+        e ``clientInfo`` (objeto com ``name``/``version`` string não vazia);
+        qualquer violação é InvalidParams (-32602). A versão é negociada por
+        ``negotiate_protocol_version`` — versão incompatível também é
+        InvalidParams. A resposta anuncia as capabilities do Gateway (tools,
+        resources e prompts, todas sem ``listChanged``) e o ``serverInfo``.
+        """
+        params = request.params
+        if not isinstance(params, dict):
+            return make_error(request.id, INVALID_PARAMS, "Invalid Params: params deve ser objeto")
+        protocol_version = params.get("protocolVersion")
+        capabilities = params.get("capabilities")
+        client_info = params.get("clientInfo")
+        if not isinstance(protocol_version, str) or not protocol_version:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid Params: protocolVersion obrigatório (string)"
+            )
+        if not isinstance(capabilities, dict):
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid Params: capabilities obrigatório (objeto)"
+            )
+        if not isinstance(client_info, dict):
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid Params: clientInfo obrigatório (objeto)"
+            )
+        if (
+            not isinstance(client_info.get("name"), str)
+            or not client_info["name"]
+            or not isinstance(client_info.get("version"), str)
+            or not client_info["version"]
+        ):
+            return make_error(
+                request.id,
+                INVALID_PARAMS,
+                "Invalid Params: clientInfo.name e clientInfo.version obrigatórios (strings)",
+            )
+        negotiated = negotiate_protocol_version(protocol_version)
+        if negotiated is None:
+            return make_error(
+                request.id,
+                INVALID_PARAMS,
+                f"Invalid Params: versão de protocolo não suportada: {protocol_version}",
+            )
+        return make_result(
+            request.id,
+            {
+                "protocolVersion": negotiated,
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                    "resources": {"subscribe": False, "listChanged": False},
+                    "prompts": {"listChanged": False},
+                },
+                "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Filtro seletivo por sessão (Fase 5)
+    # ------------------------------------------------------------------
+
+    def _visible(self, entries: list[RegistryEntry], session_id: str | None) -> list[RegistryEntry]:
+        """Filtra as entries do registry pela sessão (view, sem copiar dados).
+
+        Sem sessão ou sem filtro devolve a lista completa (idêntico ao
+        comportamento das fases anteriores). O acesso renova o TTL da sessão.
+        """
+        allowed = self.sessions.active_backends(session_id)
+        if allowed is None:
+            return entries
+        return [entry for entry in entries if entry.backend in allowed]
+
+    def _backend_allowed(self, backend: str, session_id: str | None) -> bool:
+        """Indica se a sessão pode chamar itens deste backend (``None`` = sem filtro)."""
+        allowed = self.sessions.active_backends(session_id)
+        return allowed is None or backend in allowed
+
+    def _handle_set_active_backends(
+        self, request: JsonRpcRequest, session_id: str | None
+    ) -> dict[str, Any]:
+        """Extensão: define o subconjunto de backends visível à sessão.
+
+        Params: ``{"backends": ["backend-a", ...]}`` (lista não vazia de nomes
+        existentes no config). Retorna InvalidParams (-32602) se o payload for
+        malformado ou citar backend desconhecido — falha explícita, nunca filtro
+        parcial silencioso. Exige o header de sessão; sem ele é InvalidRequest.
+        """
+        if session_id is None:
+            return make_error(
+                request.id,
+                INVALID_REQUEST,
+                f"Invalid Request: extensão de sessão exige o header {SESSION_HEADER}",
+            )
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
+        raw = params.get("backends")
+        if (
+            not isinstance(raw, list)
+            or not raw
+            or not all(isinstance(name, str) and name for name in raw)
+        ):
+            return make_error(
+                request.id,
+                INVALID_PARAMS,
+                "Invalid params: 'backends' deve ser uma lista não vazia de nomes de backend",
+            )
+        known = set(self.backend_manager.all_states())
+        unknown = sorted(set(raw) - known)
+        if unknown:
+            return make_error(
+                request.id,
+                INVALID_PARAMS,
+                f"Invalid params: backends desconhecidos: {', '.join(unknown)}",
+                data={"known_backends": sorted(known)},
+            )
+        self.sessions.set_active_backends(session_id, frozenset(raw))
+        return make_result(request.id, {"active_backends": sorted(set(raw))})
+
+    def _handle_get_active_backends(
+        self, request: JsonRpcRequest, session_id: str | None
+    ) -> dict[str, Any]:
+        """Extensão: lista os backends ativos da sessão (``null`` = sem filtro)."""
+        active = self.sessions.active_backends(session_id)
+        return make_result(
+            request.id,
+            {
+                "active_backends": sorted(active) if active is not None else None,
+                "filtered": active is not None,
+            },
+        )
+
+    def _handle_clear_active_backends(
+        self, request: JsonRpcRequest, session_id: str | None
+    ) -> dict[str, Any]:
+        """Extensão: remove o filtro — a sessão volta a ver todos os backends."""
+        if session_id is not None:
+            self.sessions.clear(session_id)
+        return make_result(request.id, {"active_backends": None, "filtered": False})
+
+    # ------------------------------------------------------------------
+    # Handlers de chamada (roteamento por namespace)
+    # ------------------------------------------------------------------
+
+    async def _handle_tools_call(
+        self, request: JsonRpcRequest, session_id: str | None = None
+    ) -> dict[str, Any]:
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
+        tool_name = params.get("name")
+        if not isinstance(tool_name, str) or not tool_name:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório"
+            )
+        arguments = params.get("arguments")
+        if arguments is not None and not isinstance(arguments, dict):
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: 'arguments' deve ser um objeto"
+            )
+        entry = self._tools.get(tool_name)
+        if entry is None:
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown tool: {tool_name}")
+        if not self._backend_allowed(entry.backend, session_id):
+            logger.info(
+                "request_blocked_by_session_filter",
+                method="tools/call",
+                item=entry.namespaced,
+                session_id=session_id,
+            )
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown tool: {tool_name}")
+        logger.info(
+            "request_dispatched", method="tools/call", item=entry.namespaced, backend=entry.backend
+        )
+        call_params = dict(params)
+        call_params["name"] = entry.name
+        call_params["arguments"] = arguments or {}
+        return await self._call_backend(request.id, entry, "tools/call", call_params)
+
+    async def _handle_resource_read(
+        self, request: JsonRpcRequest, session_id: str | None = None
+    ) -> dict[str, Any]:
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
+        uri = params.get("uri")
+        if not isinstance(uri, str) or not uri:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: 'uri' (string) é obrigatório"
+            )
+        entry = self._resources.get(uri)
+        if entry is None:
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown resource: {uri}")
+        if not self._backend_allowed(entry.backend, session_id):
+            logger.info(
+                "request_blocked_by_session_filter",
+                method="resources/read",
+                item=entry.namespaced,
+                session_id=session_id,
+            )
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown resource: {uri}")
+        logger.info(
+            "request_dispatched",
+            method="resources/read",
+            item=entry.namespaced,
+            backend=entry.backend,
+        )
+        call_params = dict(params)
+        call_params["uri"] = entry.name
+        result = await self._call_backend(request.id, entry, "resources/read", call_params)
+        if result.get("error") is None and isinstance(result.get("result"), dict):
+            result = dict(result)
+            result["result"] = self._namespace_content_uris(
+                result["result"], entry.backend, entry.name
+            )
+        return result
+
+    async def _handle_prompt_get(
+        self, request: JsonRpcRequest, session_id: str | None = None
+    ) -> dict[str, Any]:
+        params = self._require_object_params(request)
+        if params is None:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: params deve ser um objeto"
+            )
+        prompt_name = params.get("name")
+        if not isinstance(prompt_name, str) or not prompt_name:
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório"
+            )
+        arguments = params.get("arguments")
+        if arguments is not None and not isinstance(arguments, dict):
+            return make_error(
+                request.id, INVALID_PARAMS, "Invalid params: 'arguments' deve ser um objeto"
+            )
+        entry = self._prompts.get(prompt_name)
+        if entry is None:
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown prompt: {prompt_name}")
+        if not self._backend_allowed(entry.backend, session_id):
+            logger.info(
+                "request_blocked_by_session_filter",
+                method="prompts/get",
+                item=entry.namespaced,
+                session_id=session_id,
+            )
+            return make_error(request.id, ITEM_NOT_FOUND, f"Unknown prompt: {prompt_name}")
+        logger.info(
+            "request_dispatched", method="prompts/get", item=entry.namespaced, backend=entry.backend
+        )
+        call_params = dict(params)
+        call_params["name"] = entry.name
+        if arguments is not None:
+            call_params["arguments"] = arguments
+        return await self._call_backend(request.id, entry, "prompts/get", call_params)
+
+    async def _call_backend(
+        self,
+        request_id: int | str | None,
+        entry: RegistryEntry,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Encaminha a chamada ao backend e traduz falhas em erro JSON-RPC.
+
+        O client ativo é resolvido no BackendManager a cada chamada — se o
+        backend estiver offline/restartando, a chamada vira BACKEND_UNAVAILABLE
+        sem afetar o Gateway. Erros JSON-RPC do backend são repassados com o
+        código original; falhas de transporte (timeout, processo morto etc.)
+        viram BACKEND_UNAVAILABLE.
+        """
+        try:
+            client = self.backend_manager.get_client(entry.backend)
+            result = await client.send_request(method, params)
+        except BackendJsonRpcError as exc:
+            logger.warning(
+                "backend_jsonrpc_error",
+                backend=entry.backend,
+                method=method,
+                code=exc.code,
+                message=exc.message,
+            )
+            return make_error(request_id, exc.code, exc.message, data=exc.data)
+        except BackendError as exc:
+            logger.warning(
+                "backend_unavailable", backend=entry.backend, method=method, error=str(exc)
+            )
+            return make_error(
+                request_id, BACKEND_UNAVAILABLE, f"Backend '{entry.backend}' indisponível"
+            )
+        return make_result(request_id, result)
+
+    # ------------------------------------------------------------------
+    # Helpers de validação/serialização
+    # ------------------------------------------------------------------
+
+    def tools_list_size(self, session_id: str | None = None) -> dict[str, Any]:
+        """Diagnóstico (Fase 5): tamanho do ``tools/list`` desta sessão/all.
+
+        Estimativa simples por caracteres (``len(json.dumps)``) e tokens
+        aproximados (chars/4, heurística grosseira — não é tokenizer real).
+        Serve para decidir na prática se o filtro seletivo vale a pena para um
+        config específico (ver GET /api/tools/size no README).
+        """
+        entries = self._visible(self._tools.list_all(), session_id)
+        payloads = [
+            payload for entry in entries if (payload := self._tool_payload(entry)) is not None
+        ]
+        serialized = json.dumps({"tools": payloads}, ensure_ascii=False)
+        per_backend: dict[str, int] = {}
+        for entry, payload in zip(entries, payloads):
+            per_backend[entry.backend] = per_backend.get(entry.backend, 0) + len(
+                json.dumps(payload, ensure_ascii=False)
+            )
+        filtered = self.sessions.active_backends(session_id) is not None
+        return {
+            "tools_count": len(entries),
+            "json_chars": len(serialized),
+            "approx_tokens": len(serialized) // APPROX_CHARS_PER_TOKEN,
+            "per_backend_chars": dict(sorted(per_backend.items())),
+            "session_id": session_id,
+            "filtered": filtered,
+        }
+
+    @staticmethod
+    def _extract_id(raw_body: dict[str, Any]) -> int | str | None:
+        """Extrai o ``id`` do envelope; ``bool`` e tipos inválidos viram ``None``."""
+        candidate = raw_body.get("id")
+        if isinstance(candidate, bool):
+            return None
+        return candidate if isinstance(candidate, (int, str)) else None
+
+    @staticmethod
+    def _require_object_params(request: JsonRpcRequest) -> dict[str, Any] | None:
+        """Retorna ``params`` como objeto; ausência ou tipo não-objeto vira ``None``."""
+        if isinstance(request.params, dict):
+            return request.params
+        return None
+
+    @staticmethod
+    def _envelope_error(raw_body: dict[str, Any], request_id: int | str | None) -> str | None:
+        """Valida o envelope JSON-RPC; devolve mensagem de erro ou ``None`` se válido."""
+        if raw_body.get("id") is not None and request_id is None:
+            return "'id' deve ser uma string ou número"
+        if raw_body.get("jsonrpc") != "2.0":
+            return "'jsonrpc' ausente ou inválido (deve ser \"2.0\")"
+        method = raw_body.get("method")
+        if not isinstance(method, str) or not method:
+            return "'method' ausente ou inválido (deve ser string não vazia)"
+        return None
+
+    @staticmethod
+    def _tool_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        """Payload de uma tool com ``name`` namespaced; ``None`` se metadata inválida."""
+        if not isinstance(entry.metadata.get("description"), str):
+            logger.warning(
+                "backend_item_omitido",
+                kind="tool",
+                item=entry.namespaced,
+                reason="description inválida",
+            )
+            return None
+        payload = dict(entry.metadata)
+        payload["name"] = entry.namespaced
+        return payload
+
+    @staticmethod
+    def _resource_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        """Payload de um resource com ``uri`` namespaced; ``None`` se metadata inválida."""
+        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:
+            logger.warning(
+                "backend_item_omitido",
+                kind="resource",
+                item=entry.namespaced,
+                reason="name inválido",
+            )
+            return None
+        payload = dict(entry.metadata)
+        payload["uri"] = entry.namespaced
+        return payload
+
+    @staticmethod
+    def _prompt_payload(entry: RegistryEntry) -> dict[str, Any] | None:
+        """Payload de um prompt com ``name`` namespaced; ``None`` se metadata inválida."""
+        if not isinstance(entry.metadata.get("name"), str) or not entry.metadata["name"]:
+            logger.warning(
+                "backend_item_omitido",
+                kind="prompt",
+                item=entry.namespaced,
+                reason="name inválido",
+            )
+            return None
+        payload = dict(entry.metadata)
+        payload["name"] = entry.namespaced
+        return payload
+
+    @staticmethod
+    def _namespace_content_uris(
+        result: dict[str, Any], backend: str, original_uri: str
+    ) -> dict[str, Any]:
+        """Reescreve a ``uri`` original dos ``contents`` para o formato namespaced.
+
+        Mantém o round-trip: o cliente devolve a uri que o Gateway anunciou no
+        ``resources/list`` e o backend recebe/devolve a uri original.
+        """
+        contents = result.get("contents")
+        if not isinstance(contents, list):
+            return result
+        rewritten = []
+        for item in contents:
+            if isinstance(item, dict) and item.get("uri") == original_uri:
+                item = dict(item)
+                item["uri"] = f"{backend}.{item['uri']}"
+            rewritten.append(item)
         return {**result, "contents": rewritten}

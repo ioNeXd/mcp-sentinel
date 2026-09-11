@@ -293,6 +293,7 @@ async def test_restart_manual_falha_inesperada_vira_backenderror_e_offline() -> 
     manager, _ = make_fake_manager(("backend-a",))
     await manager.start_all()
     try:
+
         async def boom(name: str) -> None:
             raise RuntimeError("bug inesperado no start")
 
@@ -327,45 +328,45 @@ async def test_restart_manual_cancela_restart_pendente() -> None:
         await manager.stop_all()
 
 
-@pytest.mark.asyncio  
-async def test_restart_manual_nao_dispara_restart_concorrente_do_monitor() -> None:  
-    manager, factory = make_fake_manager(("backend-a",))  
-    await manager.start_all()  
-    entered = asyncio.Event()  
-    release = asyncio.Event()  
-    original_start_one = manager._start_one  
-  
-    async def slow_start_one(name: str) -> None:  
-        entered.set()  
-        await release.wait()  
-        await original_start_one(name)  
-  
-    manager._start_one = slow_start_one  # type: ignore[method-assign]  
-    restart_task = asyncio.create_task(manager.restart("backend-a"))  
-    recover_task: asyncio.Task[BackendStatus] | None = None  
-    try:  
-        await entered.wait()  
-        assert manager.status_of("backend-a") is BackendStatus.RESTARTING  
-        # check_and_recover NÃO pode rodar concorrente: fica bloqueado no mesmo  
-        # _restart_locks[backend] que o restart manual está segurando dentro de  
-        # _start_one. Lançamos como task e confirmamos que ela não progride  
-        # enquanto o restart está em andamento — em vez de dar await direto  
-        # (que faria deadlock: release.set() só viria depois desse await).  
-        recover_task = asyncio.create_task(manager.check_and_recover("backend-a"))  
-        await asyncio.sleep(0)  
-        assert not recover_task.done()  # bloqueada esperando o lock do restart  
-        release.set()  
-        await restart_task  
-        await recover_task  # pega o lock só agora; backend já RUNNING → no-op  
-        await asyncio.sleep(0)  
-        assert len(factory.created) == 2  
-        assert all(client.stopped for client in factory.created[:1])  
-    finally:  
-        release.set()  
-        if not restart_task.done():  
-            await restart_task  
-        if recover_task is not None and not recover_task.done():  
-            await recover_task  
+@pytest.mark.asyncio
+async def test_restart_manual_nao_dispara_restart_concorrente_do_monitor() -> None:
+    manager, factory = make_fake_manager(("backend-a",))
+    await manager.start_all()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_start_one = manager._start_one
+
+    async def slow_start_one(name: str) -> None:
+        entered.set()
+        await release.wait()
+        await original_start_one(name)
+
+    manager._start_one = slow_start_one  # type: ignore[method-assign]
+    restart_task = asyncio.create_task(manager.restart("backend-a"))
+    recover_task: asyncio.Task[BackendStatus] | None = None
+    try:
+        await entered.wait()
+        assert manager.status_of("backend-a") is BackendStatus.RESTARTING
+        # check_and_recover NÃO pode rodar concorrente: fica bloqueado no mesmo
+        # _restart_locks[backend] que o restart manual está segurando dentro de
+        # _start_one. Lançamos como task e confirmamos que ela não progride
+        # enquanto o restart está em andamento — em vez de dar await direto
+        # (que faria deadlock: release.set() só viria depois desse await).
+        recover_task = asyncio.create_task(manager.check_and_recover("backend-a"))
+        await asyncio.sleep(0)
+        assert not recover_task.done()  # bloqueada esperando o lock do restart
+        release.set()
+        await restart_task
+        await recover_task  # pega o lock só agora; backend já RUNNING → no-op
+        await asyncio.sleep(0)
+        assert len(factory.created) == 2
+        assert all(client.stopped for client in factory.created[:1])
+    finally:
+        release.set()
+        if not restart_task.done():
+            await restart_task
+        if recover_task is not None and not recover_task.done():
+            await recover_task
         await manager.stop_all()
 
 

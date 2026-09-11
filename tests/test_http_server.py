@@ -35,29 +35,29 @@ ADD_TOOL = {
 BASE_URL = "http://test"
 
 
-def test_render_dashboard_importado_com_backend() -> None:  
-    html = _render_dashboard(  
-        {  
-            "status": "ok",  
-            "backends": {"backend-a": "running"},  
-            "tools_count": 1,  
-            "resources_count": 0,  
-            "prompts_count": 0,  
-        },  
-        [  
-            {  
-                "name": "backend-a",  
-                "type": "stdio",  
-                "status": "RUNNING",  
-                "tools_count": 1,  
-                "resources_count": 0,  
-                "prompts_count": 0,  
-                "consecutive_failures": 0,  
-            }  
-        ],  
-        token=None,  
-    )  
-    assert 'class="card"' in html  
+def test_render_dashboard_importado_com_backend() -> None:
+    html = _render_dashboard(
+        {
+            "status": "ok",
+            "backends": {"backend-a": "running"},
+            "tools_count": 1,
+            "resources_count": 0,
+            "prompts_count": 0,
+        },
+        [
+            {
+                "name": "backend-a",
+                "type": "stdio",
+                "status": "RUNNING",
+                "tools_count": 1,
+                "resources_count": 0,
+                "prompts_count": 0,
+                "consecutive_failures": 0,
+            }
+        ],
+        token=None,
+    )
+    assert 'class="card"' in html
     assert 'data-name="backend-a"' in html
 
 
@@ -65,9 +65,7 @@ async def make_app_with_fakes() -> McpServer:
     """McpServer com dois clients fake, já iniciado."""
     client_a = FakeClient(tools=[ECHO_TOOL])
     client_b = FakeClient(tools=[ADD_TOOL])
-    manager, registries = make_manager_for_clients(
-        {"backend-a": client_a, "backend-b": client_b}
-    )
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
     server = McpServer(manager, registries)
     await server.start()
     return server
@@ -78,7 +76,9 @@ async def test_tools_list_via_http() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
             )
@@ -97,7 +97,9 @@ async def test_tools_call_via_http() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp",
                 json={
@@ -118,7 +120,9 @@ async def test_json_malformado_retorna_parse_error() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp",
                 content="{isto nao e json",
@@ -137,7 +141,9 @@ async def test_content_type_invalido() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post("/mcp", content="qualquer coisa")
         assert resp.status_code == 415
     finally:
@@ -174,7 +180,9 @@ async def test_body_nao_dict_retorna_invalid_request() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post("/mcp", json=[1, 2, 3])  # batch não suportado
         assert resp.status_code == 200
         assert resp.json()["error"]["code"] == -32600
@@ -187,7 +195,9 @@ async def test_notificacao_retorna_202_sem_corpo() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
             )
@@ -227,7 +237,9 @@ async def test_campo_obrigatorio_ausente_via_http() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post("/mcp", json={"jsonrpc": "2.0", "id": 7})  # sem method
         assert resp.status_code == 200
         payload = resp.json()
@@ -242,7 +254,9 @@ async def test_payload_grande_demais_retorna_413() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, max_payload_bytes=100)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp",
                 content="x" * 500,
@@ -308,7 +322,9 @@ async def test_auth_401_quando_token_esperado_e_header_ausente() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
             )
@@ -322,7 +338,9 @@ async def test_auth_401_com_token_errado() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp",
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -338,7 +356,9 @@ async def test_auth_ok_com_token_correto() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp",
                 json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
@@ -358,7 +378,9 @@ async def test_auth_ok_com_token_correto() -> None:
 
 
 async def _post_tools_list(client: httpx.AsyncClient, **kwargs: Any) -> httpx.Response:
-    return await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, **kwargs)
+    return await client.post(
+        "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, **kwargs
+    )
 
 
 @pytest.mark.asyncio
@@ -367,12 +389,17 @@ async def test_auth_ok_com_token_via_query_string() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await _post_tools_list(client, params={"token": "segredo"})
         assert resp.status_code == 200
         payload = resp.json()
         assert payload.get("error") is None
-        assert {t["name"] for t in payload["result"]["tools"]} == {"backend-a.echo", "backend-b.add"}
+        assert {t["name"] for t in payload["result"]["tools"]} == {
+            "backend-a.echo",
+            "backend-b.add",
+        }
     finally:
         await server.stop()
 
@@ -382,7 +409,9 @@ async def test_auth_401_com_token_errado_via_query_string() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await _post_tools_list(client, params={"token": "errado"})
         assert resp.status_code == 401
         assert resp.headers["www-authenticate"] == "Bearer"
@@ -397,7 +426,9 @@ async def test_auth_ok_com_header_errado_e_query_correta() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await _post_tools_list(
                 client,
                 params={"token": "segredo"},
@@ -416,7 +447,9 @@ async def test_auth_ok_com_header_correto_e_query_errada() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await _post_tools_list(
                 client,
                 params={"token": "errado"},
@@ -435,7 +468,9 @@ async def test_token_via_query_string_nao_vaza_nos_logs() -> None:
     server = await make_app_with_fakes()
     try:
         app = create_app(server, auth_token="segredo-secreto")
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             with capture_structlog_events() as events:
                 await _post_tools_list(client, params={"token": "segredo-secreto"})
                 await _post_tools_list(client, params={"token": "segredo-errado"})
@@ -449,12 +484,16 @@ async def test_token_via_query_string_nao_vaza_nos_logs() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_id_consistente_nos_logs_da_mesma_request(captured_logs: list[dict[str, Any]]) -> None:
+async def test_request_id_consistente_nos_logs_da_mesma_request(
+    captured_logs: list[dict[str, Any]],
+) -> None:
     """Todo log de uma request HTTP carrega o mesmo request_id (contextvars)."""
     server = await make_app_with_fakes()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             await client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
             await client.post(
                 "/mcp",
@@ -516,7 +555,9 @@ async def test_e2e_dois_backends_reais_via_gateway() -> None:
     await server.start()
     try:
         app = create_app(server)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=BASE_URL) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=BASE_URL
+        ) as client:
             resp = await client.post(
                 "/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
             )
@@ -572,7 +613,9 @@ async def test_e2e_dois_backends_reais_via_gateway() -> None:
                 "/mcp", json={"jsonrpc": "2.0", "id": 5, "method": "prompts/list"}
             )
             assert resp.status_code == 200
-            prompt_names = {p["name"] for p in resp.json()["result"]["prompts"] if isinstance(p, dict)}
+            prompt_names = {
+                p["name"] for p in resp.json()["result"]["prompts"] if isinstance(p, dict)
+            }
             assert "backend-a.greet" in prompt_names
 
             resp = await client.post(
@@ -631,9 +674,7 @@ async def test_health_degraded_quando_backend_offline() -> None:
     """Backend offline (sem restart possível) reflete 'degraded' no /health."""
     client_a = FakeClient(tools=[ECHO_TOOL])
     client_b = FakeClient(tools=[ADD_TOOL])
-    manager, registries = make_manager_for_clients(
-        {"backend-a": client_a, "backend-b": client_b}
-    )
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
     manager.config.auto_restart = False
     server = McpServer(manager, registries)
     await server.start()
@@ -665,9 +706,7 @@ async def test_api_servers_sem_auth_retorna_401_com_token_configurado() -> None:
             assert resp.status_code == 401
             assert resp.headers["www-authenticate"] == "Bearer"
 
-            resp = await client.get(
-                "/api/servers", headers={"Authorization": "Bearer segredo"}
-            )
+            resp = await client.get("/api/servers", headers={"Authorization": "Bearer segredo"})
         assert resp.status_code == 200
         servers = resp.json()["servers"]
         assert {s["name"] for s in servers} == {"backend-a", "backend-b"}

@@ -27,7 +27,9 @@ def http_backend():
     stop_fake_server(process)
 
 
-def make_client(url: str, timeout: float = 5.0, headers: dict[str, str] | None = None) -> HttpClient:
+def make_client(
+    url: str, timeout: float = 5.0, headers: dict[str, str] | None = None
+) -> HttpClient:
     config = BackendConfig(name="http-test", type="http", url=url, headers=headers or {})
     return HttpClient(config, request_timeout=timeout)
 
@@ -283,9 +285,7 @@ async def test_content_type_inesperado_é_erro_de_transporte() -> None:
     """3.4 — Content-Type fora de JSON/SSE falha na hora, com o tipo na mensagem."""
 
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200, headers={"content-type": "text/plain"}, content=b"nao-sou-json"
-        )
+        return httpx.Response(200, headers={"content-type": "text/plain"}, content=b"nao-sou-json")
 
     client = _mock_client(handler)
     try:
@@ -356,6 +356,7 @@ async def test_erro_http_status_levanta_backend_http_status_error() -> None:
     genérico — a informação do código (401, 404, 500 ...) só estava na string.
     Agora é uma subclasse com o código acessível programaticamente.
     """
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, headers={"content-type": "application/json"})
 

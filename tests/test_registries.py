@@ -91,7 +91,9 @@ def test_unregister_remove_apenas_o_backend(registry_cls, item, namespaced, id_k
 
 
 @pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
-def test_item_invalido_e_rejeitado_sem_corromper_snapshot(registry_cls, item, namespaced, id_key) -> None:
+def test_item_invalido_e_rejeitado_sem_corromper_snapshot(
+    registry_cls, item, namespaced, id_key
+) -> None:
     registry = registry_cls()
     registry.register("backend-a", [item])
     bad_items: list[object] = [
@@ -124,9 +126,7 @@ def test_registry_instancias_independentes() -> None:
 
 
 @pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
-def test_duplicado_na_mesma_leva_e_rejeitado(
-    registry_cls, item, namespaced, id_key
-) -> None:
+def test_duplicado_na_mesma_leva_e_rejeitado(registry_cls, item, namespaced, id_key) -> None:
     """1.1 — dois itens da MESMA listagem com o mesmo id: erro, sem sobrescrever.
 
     Diferente do re-registro entre levas (sobrescrita intencional), colisão
@@ -189,9 +189,7 @@ def test_identifier_com_ponto_e_rejeitado_para_nomes(
 
 
 @pytest.mark.parametrize("registry_cls,item,namespaced,id_key", CASES)
-def test_identifier_com_espaco_e_rejeitado(
-    registry_cls, item, namespaced, id_key
-) -> None:
+def test_identifier_com_espaco_e_rejeitado(registry_cls, item, namespaced, id_key) -> None:
     """1.3 — espaço em branco no identificador vira BackendError claro."""
     registry = registry_cls()
     com_espaco = dict(item)

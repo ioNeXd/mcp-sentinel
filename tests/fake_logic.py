@@ -23,9 +23,7 @@ TOOLS = [
         "description": "Repete o texto recebido em 'text'.",
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Texto a ser repetido."}
-            },
+            "properties": {"text": {"type": "string", "description": "Texto a ser repetido."}},
             "required": ["text"],
         },
     },

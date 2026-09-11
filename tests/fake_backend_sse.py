@@ -51,7 +51,10 @@ MESSAGES_PATH = "/messages"
 
 
 def create_app(
-    *, send_endpoint: bool = True, silent: bool = False, keepalive: float = KEEPALIVE_INTERVAL_SECONDS
+    *,
+    send_endpoint: bool = True,
+    silent: bool = False,
+    keepalive: float = KEEPALIVE_INTERVAL_SECONDS,
 ) -> FastAPI:
     """App FastAPI com o stream SSE (GET /) e o POST no endpoint anunciado."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)

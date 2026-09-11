@@ -411,9 +411,7 @@ def make_mixed_manager(
     """
     config = GatewayConfig(
         backends=[
-            BackendConfig(
-                name="local", command=sys.executable, args=[str(FAKE_BACKEND_PATH)]
-            ),
+            BackendConfig(name="local", command=sys.executable, args=[str(FAKE_BACKEND_PATH)]),
             BackendConfig(name="remoto", type="http", url=http_url),
             BackendConfig(name="eventos", type="sse", url=sse_url),
         ],
@@ -424,9 +422,7 @@ def make_mixed_manager(
 
 
 @pytest.mark.asyncio
-async def test_start_all_com_os_tres_tipos_agrega_e_roteia(
-    http_fake: str, sse_fake: str
-) -> None:
+async def test_start_all_com_os_tres_tipos_agrega_e_roteia(http_fake: str, sse_fake: str) -> None:
     """Critério de aceite da Fase 3: stdio + http + sse agregados e roteados."""
     from gateway.server import McpServer
 
@@ -441,9 +437,7 @@ async def test_start_all_com_os_tres_tipos_agrega_e_roteia(
             assert type(client).__name__ in {"StdioClient", "HttpClient", "SseClient"}
 
         # tools/list agrega os TRÊS backends (cada fake expõe echo+add).
-        response = await server.process_message(
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-        )
+        response = await server.process_message({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
         assert response is not None and response.get("error") is None
         names = {tool["name"] for tool in response["result"]["tools"]}
         assert names == {
@@ -593,9 +587,7 @@ async def test_health_e_restart_sse_reconecta_quando_servidor_volta() -> None:
 
 
 @pytest.mark.asyncio
-async def test_health_monitor_funciona_para_os_tres_tipos(
-    http_fake: str, sse_fake: str
-) -> None:
+async def test_health_monitor_funciona_para_os_tres_tipos(http_fake: str, sse_fake: str) -> None:
     """O ciclo do HealthMonitor (Fase 2) se aplica aos 3 transportes."""
     from conftest import FAKE_SSE_BACKEND_PATH, spawn_fake_server_on_port, stop_fake_server
     from gateway.health_monitor import HealthMonitor

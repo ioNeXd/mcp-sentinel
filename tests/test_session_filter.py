@@ -208,7 +208,9 @@ async def test_clear_volta_a_ver_tudo() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-a"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-a"]},
             session_id="s",
         )
         response = await rpc(server, "tools/list", session_id="s")
@@ -235,15 +237,15 @@ async def test_filtro_aplica_a_tools_resources_e_prompts() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-a"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-a"]},
             session_id="s",
         )
         tools = await rpc(server, "tools/list", session_id="s")
         assert {t["name"] for t in tools["result"]["tools"]} == {"backend-a.echo"}
         resources = await rpc(server, "resources/list", session_id="s")
-        assert {r["uri"] for r in resources["result"]["resources"]} == {
-            "backend-a.memory://greet"
-        }
+        assert {r["uri"] for r in resources["result"]["resources"]} == {"backend-a.memory://greet"}
         prompts = await rpc(server, "prompts/list", session_id="s")
         assert {p["name"] for p in prompts["result"]["prompts"]} == {"backend-a.greet"}
     finally:
@@ -257,7 +259,9 @@ async def test_tools_call_fora_do_filtro_erro_idem_inexistente() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-a"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-a"]},
             session_id="s",
         )
         blocked = await rpc(
@@ -312,26 +316,31 @@ async def test_sessoes_isoladas_com_filtros_diferentes() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-a"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-a"]},
             session_id="sess-a",
         )
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-b"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-b"]},
             session_id="sess-b",
         )
 
         names_a = {
-            t["name"] for t in (await rpc(server, "tools/list", session_id="sess-a"))["result"]["tools"]
+            t["name"]
+            for t in (await rpc(server, "tools/list", session_id="sess-a"))["result"]["tools"]
         }
         names_b = {
-            t["name"] for t in (await rpc(server, "tools/list", session_id="sess-b"))["result"]["tools"]
+            t["name"]
+            for t in (await rpc(server, "tools/list", session_id="sess-b"))["result"]["tools"]
         }
         names_all = {
-            t["name"] for t in (await rpc(server, "tools/list", session_id="sess-tudo"))["result"]["tools"]
+            t["name"]
+            for t in (await rpc(server, "tools/list", session_id="sess-tudo"))["result"]["tools"]
         }
-        names_none = {
-            t["name"] for t in (await rpc(server, "tools/list"))["result"]["tools"]
-        }
+        names_none = {t["name"] for t in (await rpc(server, "tools/list"))["result"]["tools"]}
         assert names_a == {"backend-a.echo"}
         assert names_b == {"backend-b.add"}
         assert names_all == {"backend-a.echo", "backend-b.add"}  # sessão sem filtro
@@ -347,7 +356,9 @@ async def test_filtro_reflete_backend_removido_do_registry() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-b"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-b"]},
             session_id="s",
         )
         await clients["backend-b"].stop()  # backend cai; registros saem do registry
@@ -413,7 +424,9 @@ async def test_sessao_expirada_no_gateway_vira_acesso_total() -> None:
     await server.start()
     try:
         await rpc(
-            server, "gateway/session/set_active_backends", {"backends": ["backend-a"]},
+            server,
+            "gateway/session/set_active_backends",
+            {"backends": ["backend-a"]},
             session_id="s",
         )
         response = await rpc(server, "tools/list", session_id="s")
@@ -527,9 +540,7 @@ async def test_api_tools_size_diagnostico() -> None:
             assert payload_filtered["tools_count"] == 1
             assert payload_filtered["filtered"] is True
             assert payload_filtered["session_id"] == "sess-medida"
-            assert (
-                payload_filtered["json_chars"] < payload["json_chars"]
-            )  # o ponto da fase
+            assert payload_filtered["json_chars"] < payload["json_chars"]  # o ponto da fase
     finally:
         await server.stop()
 

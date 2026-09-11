@@ -21,17 +21,13 @@ BASE_URL = "http://test"
 async def make_app() -> McpServer:
     client_a = FakeClient(tools=[ECHO_TOOL])
     client_b = FakeClient(tools=[dict(ECHO_TOOL, name="add")])
-    manager, registries = make_manager_for_clients(
-        {"backend-a": client_a, "backend-b": client_b}
-    )
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
     server = McpServer(manager, registries)
     await server.start()
     return server
 
 
-async def post_control(
-    app: object, path: str, token: str | None = None
-) -> httpx.Response:
+async def post_control(app: object, path: str, token: str | None = None) -> httpx.Response:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=BASE_URL

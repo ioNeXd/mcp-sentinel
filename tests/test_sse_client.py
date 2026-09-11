@@ -289,9 +289,7 @@ def _stop_inprocess_sse_server(server: "uvicorn.Server", thread: "threading.Thre
     thread.join(timeout=5)
 
 
-def _echo_sse_app(
-    *, stream_path: str, endpoint_event_data: str, messages_path: str
-) -> FastAPI:
+def _echo_sse_app(*, stream_path: str, endpoint_event_data: str, messages_path: str) -> FastAPI:
     """App SSE mínimo: anuncia ``endpoint_event_data`` e responde via stream.
 
     O POST é aceito em ``messages_path`` e a resposta JSON-RPC volta pelo
@@ -510,9 +508,7 @@ async def test_post_com_erro_http_falha_imediatamente(sse_backend: str) -> None:
         _stop_inprocess_sse_server(server, thread)
 
 
-def _post_error_app(
-    *, status_code: int, stream_path: str, messages_path: str
-) -> "FastAPI":
+def _post_error_app(*, status_code: int, stream_path: str, messages_path: str) -> "FastAPI":
     """App SSE que responde erro HTTP a todo POST exceto o handshake initialize.
 
     O initialize precisa ser respondido (pelo stream) para o start() do client

@@ -87,7 +87,9 @@ async def test_handshake_tools_list_e_call() -> None:
 async def test_timeout_quando_backend_nao_responde() -> None:
     # Processo que só lê stdin e nunca responde: handshake estoura o timeout.
     client = StdioClient(
-        BackendConfig(name="lento", command=sys.executable, args=["-c", "import sys; sys.stdin.read()"]),
+        BackendConfig(
+            name="lento", command=sys.executable, args=["-c", "import sys; sys.stdin.read()"]
+        ),
         request_timeout=0.2,
     )
     with pytest.raises(BackendTimeoutError):
@@ -150,7 +152,9 @@ async def test_lista_resources_e_prompts_do_backend() -> None:
         prompts = await client.list_prompts()
         assert [p["name"] for p in prompts] == ["greet"]
 
-        got = await client.send_request("prompts/get", {"name": "greet", "arguments": {"person": "Ana"}})
+        got = await client.send_request(
+            "prompts/get", {"name": "greet", "arguments": {"person": "Ana"}}
+        )
         assert got["messages"][0]["content"]["text"] == "Ola, Ana!"
     finally:
         await client.stop()
@@ -303,45 +307,41 @@ async def test_send_notification_levanta_quando_client_encerrado() -> None:
         await client._send_notification("notifications/initialized")  # noqa: SLF001
 
 
-@pytest.mark.asyncio  
-async def test_handle_message_rejeita_jsonrpc_invalido() -> None:  
-    """Envelope malformado é validado por BaseClient._apply_response.  
-  
-    Após o BUG-A, StdioClient._handle_message não valida mais o envelope:  
-    delega 100% para _apply_response, que loga o aviso  
-    "resposta malformada do backend" e FALHA a pending com BackendError —  
-    nunca resolve com resultado vazio.  
-    """  
-    client = make_client()  
-    await client.start()  
-    try:  
-        malformed_lines = [  
-            json.dumps({"id": 1, "result": {}}).encode(),  # sem jsonrpc  
-            json.dumps({"jsonrpc": "1.0", "id": 2, "result": {}}).encode(),  # jsonrpc errado  
-            json.dumps({"jsonrpc": None, "id": 3, "result": {}}).encode(),  # jsonrpc null  
-        ]  
-        # Registra uma pending real para cada id: o contrato é FALHAR a future  
-        # com BackendError (não resolver com resultado vazio).  
-        futures = [client._register_pending(i) for i in (1, 2, 3)]  # noqa: SLF001  
-        with capture_structlog_events() as events:  
-            for line in malformed_lines:  
-                await client._handle_message(line)  # noqa: SLF001  
-        malformed_events = [  
-            e for e in events if e["event"] == "resposta malformada do backend"  
-        ]  
-        assert len(malformed_events) == 3, (  
-            f"esperado 3 avisos de envelope inválido, got {len(malformed_events)}"  
-        )  
-        # Cada pending foi FALHADA com BackendError (nunca resolvida com None/{}).  
-        for fut in futures:  
-            assert fut.done()  
-            with pytest.raises(BackendError):  
-                fut.result()  
-        # Nenhum aviso antigo de "resposta inesperada" deve ter sido emitido.  
-        assert not [  
-            e for e in events if e["event"].startswith("resposta inesperada")  
-        ]  
-        # Todas as pendings foram consumidas.  
-        assert client._pending == {}  # noqa: SLF001  
-    finally:  
+@pytest.mark.asyncio
+async def test_handle_message_rejeita_jsonrpc_invalido() -> None:
+    """Envelope malformado é validado por BaseClient._apply_response.
+
+    Após o BUG-A, StdioClient._handle_message não valida mais o envelope:
+    delega 100% para _apply_response, que loga o aviso
+    "resposta malformada do backend" e FALHA a pending com BackendError —
+    nunca resolve com resultado vazio.
+    """
+    client = make_client()
+    await client.start()
+    try:
+        malformed_lines = [
+            json.dumps({"id": 1, "result": {}}).encode(),  # sem jsonrpc
+            json.dumps({"jsonrpc": "1.0", "id": 2, "result": {}}).encode(),  # jsonrpc errado
+            json.dumps({"jsonrpc": None, "id": 3, "result": {}}).encode(),  # jsonrpc null
+        ]
+        # Registra uma pending real para cada id: o contrato é FALHAR a future
+        # com BackendError (não resolver com resultado vazio).
+        futures = [client._register_pending(i) for i in (1, 2, 3)]  # noqa: SLF001
+        with capture_structlog_events() as events:
+            for line in malformed_lines:
+                await client._handle_message(line)  # noqa: SLF001
+        malformed_events = [e for e in events if e["event"] == "resposta malformada do backend"]
+        assert len(malformed_events) == 3, (
+            f"esperado 3 avisos de envelope inválido, got {len(malformed_events)}"
+        )
+        # Cada pending foi FALHADA com BackendError (nunca resolvida com None/{}).
+        for fut in futures:
+            assert fut.done()
+            with pytest.raises(BackendError):
+                fut.result()
+        # Nenhum aviso antigo de "resposta inesperada" deve ter sido emitido.
+        assert not [e for e in events if e["event"].startswith("resposta inesperada")]
+        # Todas as pendings foram consumidas.
+        assert client._pending == {}  # noqa: SLF001
+    finally:
         await client.stop()

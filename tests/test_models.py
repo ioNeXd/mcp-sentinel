@@ -10,12 +10,8 @@ def test_make_result_preserva_result_null() -> None:
 
 
 def test_request_distingue_id_ausente_de_null_explicito() -> None:
-    notification = JsonRpcRequest.model_validate(
-        {"jsonrpc": "2.0", "method": "ping"}
-    )
-    null_request = JsonRpcRequest.model_validate(
-        {"jsonrpc": "2.0", "id": None, "method": "ping"}
-    )
+    notification = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "method": "ping"})
+    null_request = JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": None, "method": "ping"})
     identified_request = JsonRpcRequest.model_validate(
         {"jsonrpc": "2.0", "id": 1, "method": "ping"}
     )

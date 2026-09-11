@@ -25,10 +25,10 @@ from typing import Any
 
 import pytest
 
-from conftest import FAKE_BACKEND_PATH, configure_quiet_structlog, make_fake_manager  
-from gateway.health_monitor import HealthMonitor  
-from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry  
-from gateway.server import McpServer  
+from conftest import FAKE_BACKEND_PATH, configure_quiet_structlog, make_fake_manager
+from gateway.health_monitor import HealthMonitor
+from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
+from gateway.server import McpServer
 from gateway.sessions import SessionFilter, SessionPurger
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,50 +82,46 @@ async def test_main_shutdown_completo_sem_traceback(monkeypatch: pytest.MonkeyPa
     assert "CancelledError" not in output
 
 
-@pytest.mark.asyncio  
-async def test_graceful_shutdown_propaga_cancelamento_do_chamador(  
-    monkeypatch: pytest.MonkeyPatch,  
-) -> None:  
-    """Cancelamento do main() DURANTE o shutdown: propaga, nunca é engolido.  
-  
-    Exceções comuns são isoladas por etapa (a próxima etapa roda), mas  
-    ``CancelledError`` só propaga depois de todas as etapas — engoli-lo  
-    mascararia um desligamento em andamento do event loop, mas propagá-lo no  
-    meio impediria os backends de serem finalizados.  
-    """  
-    from main import _graceful_shutdown  
-  
-    manager, _factory = make_fake_manager(("backend-a",))  
-    monitor = HealthMonitor(manager, interval_seconds=3600.0)  
-    monitor.start()  
-    await manager.start_all()  
-    mcp_server = McpServer(manager, (ToolRegistry(), ResourceRegistry(), PromptRegistry()))  
-    # session_purger não iniciado: seu stop() é um no-op limpo (task is None),  
-    # servindo só para preencher a etapa intermediária do _graceful_shutdown.  
-    session_purger = SessionPurger(SessionFilter(ttl_seconds=3600.0))  
-  
-    stop_calls: list[str] = []  
-  
-    async def stop_lento() -> None:  
-        await asyncio.Event().wait()  # nunca completa: mantém stop() cancelável  
-  
-    monkeypatch.setattr(monitor, "stop", stop_lento)  
-    monkeypatch.setattr(  
-        mcp_server, "stop", lambda: stop_calls.append("mcp") or asyncio.sleep(0)  
-    )  
-  
-    shutdown_task = asyncio.create_task(  
-        _graceful_shutdown(monitor, session_purger, mcp_server)  
-    )  
-    await asyncio.sleep(0.05)  # _graceful_shutdown já está preso no stop() do monitor  
-    shutdown_task.cancel()  
-    with pytest.raises(asyncio.CancelledError):  
-        await shutdown_task  
-  
-    assert stop_calls == ["mcp"]  # a etapa seguinte roda antes de propagar  
-    # Cleanup do teste: para o monitor e os backends de verdade.  
-    monkeypatch.undo()  
-    await monitor.stop()  
+@pytest.mark.asyncio
+async def test_graceful_shutdown_propaga_cancelamento_do_chamador(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelamento do main() DURANTE o shutdown: propaga, nunca é engolido.
+
+    Exceções comuns são isoladas por etapa (a próxima etapa roda), mas
+    ``CancelledError`` só propaga depois de todas as etapas — engoli-lo
+    mascararia um desligamento em andamento do event loop, mas propagá-lo no
+    meio impediria os backends de serem finalizados.
+    """
+    from main import _graceful_shutdown
+
+    manager, _factory = make_fake_manager(("backend-a",))
+    monitor = HealthMonitor(manager, interval_seconds=3600.0)
+    monitor.start()
+    await manager.start_all()
+    mcp_server = McpServer(manager, (ToolRegistry(), ResourceRegistry(), PromptRegistry()))
+    # session_purger não iniciado: seu stop() é um no-op limpo (task is None),
+    # servindo só para preencher a etapa intermediária do _graceful_shutdown.
+    session_purger = SessionPurger(SessionFilter(ttl_seconds=3600.0))
+
+    stop_calls: list[str] = []
+
+    async def stop_lento() -> None:
+        await asyncio.Event().wait()  # nunca completa: mantém stop() cancelável
+
+    monkeypatch.setattr(monitor, "stop", stop_lento)
+    monkeypatch.setattr(mcp_server, "stop", lambda: stop_calls.append("mcp") or asyncio.sleep(0))
+
+    shutdown_task = asyncio.create_task(_graceful_shutdown(monitor, session_purger, mcp_server))
+    await asyncio.sleep(0.05)  # _graceful_shutdown já está preso no stop() do monitor
+    shutdown_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await shutdown_task
+
+    assert stop_calls == ["mcp"]  # a etapa seguinte roda antes de propagar
+    # Cleanup do teste: para o monitor e os backends de verdade.
+    monkeypatch.undo()
+    await monitor.stop()
     await manager.stop_all()
 
 

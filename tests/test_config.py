@@ -60,6 +60,7 @@ class TestBackendTypeValidation:
         with pytest.raises(ValidationError):
             BackendConfig(name="a", type="http", url="http://x", request_timeout_seconds=0)
 
+
 class TestGatewayRequestTimeout:
     """Resolução do timeout: específico do backend vence o global."""
 

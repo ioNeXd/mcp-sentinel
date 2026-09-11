@@ -44,9 +44,7 @@ async def make_server(
         client_a = FakeClient(tools=[ECHO_TOOL])
     if client_b is None:
         client_b = FakeClient(tools=[ADD_TOOL])
-    manager, registries = make_manager_for_clients(
-        {"backend-a": client_a, "backend-b": client_b}
-    )
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
     server = McpServer(manager, registries)
     await server.start()
     return server, client_a, client_b
@@ -56,9 +54,7 @@ async def make_rich_server() -> tuple[McpServer, FakeClient, FakeClient]:
     """McpServer em que backend-a tem resources/prompts e backend-b não."""
     client_a = FakeClient(tools=[ECHO_TOOL], resources=[RESOURCE_ITEM], prompts=[PROMPT_ITEM])
     client_b = FakeClient(tools=[ADD_TOOL])
-    manager, registries = make_manager_for_clients(
-        {"backend-a": client_a, "backend-b": client_b}
-    )
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
     server = McpServer(manager, registries)
     await server.start()
     return server, client_a, client_b
@@ -233,15 +229,9 @@ async def test_initialize_rejeita_payload_ou_versao_invalida(
 async def test_notification_id_null_e_id_normal_recebem_resposta() -> None:
     server, _, _ = await make_server()
 
-    notification = await server.process_message(
-        {"jsonrpc": "2.0", "method": "ping"}
-    )
-    null_id = await server.process_message(
-        {"jsonrpc": "2.0", "id": None, "method": "ping"}
-    )
-    regular_id = await server.process_message(
-        {"jsonrpc": "2.0", "id": 71, "method": "ping"}
-    )
+    notification = await server.process_message({"jsonrpc": "2.0", "method": "ping"})
+    null_id = await server.process_message({"jsonrpc": "2.0", "id": None, "method": "ping"})
+    regular_id = await server.process_message({"jsonrpc": "2.0", "id": 71, "method": "ping"})
 
     assert notification is None
     assert null_id == {"jsonrpc": "2.0", "id": None, "result": {}}
@@ -293,19 +283,23 @@ async def test_listagem_omite_metadata_invalida_sem_derrupar_gateway() -> None:
         )
     )
 
-    tools = await server.process_message(
-        {"jsonrpc": "2.0", "id": 74, "method": "tools/list"}
-    )
+    tools = await server.process_message({"jsonrpc": "2.0", "id": 74, "method": "tools/list"})
     resources = await server.process_message(
         {"jsonrpc": "2.0", "id": 75, "method": "resources/list"}
     )
-    prompts = await server.process_message(
-        {"jsonrpc": "2.0", "id": 76, "method": "prompts/list"}
-    )
+    prompts = await server.process_message({"jsonrpc": "2.0", "id": 76, "method": "prompts/list"})
 
-    assert tools is not None and tools["result"]["tools"] == [{"name": "backend-b.add", "description": "Soma.", "inputSchema": {"type": "object", "properties": {}}}]
+    assert tools is not None and tools["result"]["tools"] == [
+        {
+            "name": "backend-b.add",
+            "description": "Soma.",
+            "inputSchema": {"type": "object", "properties": {}},
+        }
+    ]
     assert resources is not None and resources["result"]["resources"] == []
-    assert prompts is not None and [item["name"] for item in prompts["result"]["prompts"]] == ["backend-a.valid-prompt"]
+    assert prompts is not None and [item["name"] for item in prompts["result"]["prompts"]] == [
+        "backend-a.valid-prompt"
+    ]
 
 
 @pytest.mark.asyncio
@@ -333,7 +327,9 @@ async def test_falha_do_backend_vira_erro_de_aplicacao() -> None:
 @pytest.mark.asyncio
 async def test_resources_list_agregado_com_namespace_de_uri() -> None:
     server, _, _ = await make_rich_server()
-    response = await server.process_message({"jsonrpc": "2.0", "id": 10, "method": "resources/list"})
+    response = await server.process_message(
+        {"jsonrpc": "2.0", "id": 10, "method": "resources/list"}
+    )
     assert response is not None
     assert response.get("error") is None
     by_uri = {res["uri"]: res for res in response["result"]["resources"]}
@@ -347,7 +343,9 @@ async def test_resources_list_agregado_com_namespace_de_uri() -> None:
 @pytest.mark.asyncio
 async def test_resources_list_vazio_quando_ninguem_tem_resources() -> None:
     server, _, _ = await make_server()  # nenhum backend com resources
-    response = await server.process_message({"jsonrpc": "2.0", "id": 11, "method": "resources/list"})
+    response = await server.process_message(
+        {"jsonrpc": "2.0", "id": 11, "method": "resources/list"}
+    )
     assert response is not None
     assert response["result"]["resources"] == []
 

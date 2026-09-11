@@ -51,9 +51,7 @@ class DummyClient(BaseClient):
             self._fail_pending(BackendDisconnectedError("DummyClient: cliente encerrado"))
             self._mark_stopped()
 
-    async def send_request(
-        self, method: str, params: dict[str, Any] | None = None
-    ) -> Any:
+    async def send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         if method == "initialize":
             self.initialize_calls += 1
             if self._block_initialize is not None:
@@ -61,9 +59,7 @@ class DummyClient(BaseClient):
             return self._initialize_result
         raise NotImplementedError(method)
 
-    async def _send_notification(
-        self, method: str, params: dict[str, Any] | None = None
-    ) -> None:
+    async def _send_notification(self, method: str, params: dict[str, Any] | None = None) -> None:
         self.initialized_notifications += 1
 
 
@@ -204,9 +200,7 @@ async def test_request_abandonada_resposta_tardia_e_descartada() -> None:
     client = DummyClient()
     future = client._register_pending("t-1")
     with pytest.raises(BackendTimeoutError):
-        await asyncio.wait_for(
-            client._await_response("t-1", future, 0.02, "tools/list"), 1.0
-        )
+        await asyncio.wait_for(client._await_response("t-1", future, 0.02, "tools/list"), 1.0)
     assert "t-1" not in client._pending
     # Resposta tardia: _apply_response acha pending inexistente → False.
     assert client._apply_response({"jsonrpc": "2.0", "id": "t-1", "result": {}}) is False

@@ -130,9 +130,7 @@ def spawn_fake_server(script: Path, *args: str) -> tuple[int, Any]:
         if exit_code is not None:
             # Morreu sozinho antes de abrir a porta — sem o stderr aqui, o
             # sintoma seria só "não ficou pronto" após o timeout completo.
-            raise RuntimeError(
-                f"fake server {script.name} morreu no startup (exit {exit_code})"
-            )
+            raise RuntimeError(f"fake server {script.name} morreu no startup (exit {exit_code})")
     raise RuntimeError(f"fake server {script.name} não ficou pronto")
 
 
