@@ -48,6 +48,9 @@ from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_er
 from gateway.server import McpServer
 from gateway import __version__
 
+from contextlib import asynccontextmanager  
+from collections.abc import AsyncIterator
+
 # Reexporta o header de sessão do filtro seletivo (Fase 5) definido em
 # gateway.sessions, para uso das rotas deste módulo. Import ao final do bloco
 # (E402) por convenção de agrupamento após os imports de terceiros/pacote.
@@ -850,33 +853,60 @@ def _build_backend_entry(payload: dict[str, Any]) -> dict[str, Any]:
     return {"name": name, "type": btype, "url": payload["url"].strip()}
 
 
-def create_app(
-    mcp_server: McpServer,
-    *,
-    auth_token: str | None = None,
-    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
-) -> FastAPI:
-    """Cria a aplicação FastAPI com POST /mcp, GET /health, GET /api/servers,
-    rotas de controle dos backends (Fase 4) e dashboard GET /.
-
-    Validações de transporte do POST /mcp, nesta ordem:
-    1. autenticação — header ``Authorization: Bearer <token>`` ou query
-       ``?token=<token>`` (só quando ``auth_token`` é configurado) -> 401;
-    2. Content-Type deve ser application/json -> 415;
-    3. payload não pode exceder ``max_payload_bytes`` -> 413;
-    4. body deve ser JSON válido -> ParseError (-32700).
-
-    Cada request HTTP ganha um ``request_id`` (UUID) vinculado via
-    contextvars; todos os logs da mesma requisição carregam o mesmo id
-    automaticamente (ver gateway.logging).
-    """
-    app = FastAPI(
-        title="MCP Gateway",
-        version=APP_VERSION,
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-    )
+def create_app(  
+    mcp_server: McpServer,  
+    *,  
+    auth_token: str | None = None,  
+    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,  
+) -> FastAPI:  
+    """...docstring inalterada..."""  
+  
+    def _maybe_open_browser() -> None:  
+        """Abre o dashboard no navegador, salvo em modo headless.  
+  
+        Controlado por env var: ``MCP_GATEWAY_OPEN_BROWSER=false`` desliga;  
+        ``MCP_GATEWAY_PORT`` informa a porta real do uvicorn (default 8080),  
+        já que este módulo não sabe em que porta foi montado.  
+        """  
+        if os.environ.get("MCP_GATEWAY_OPEN_BROWSER", "true").strip().lower() in (  
+            "0",  
+            "false",  
+            "no",  
+        ):  
+            return  
+        port = os.environ.get("MCP_GATEWAY_PORT", "8080")  
+        url = f"http://127.0.0.1:{port}/"  
+        if auth_token:  
+            url += f"?token={auth_token}"  
+  
+        def _open() -> None:  
+            time.sleep(0.6)  # dá tempo do uvicorn começar a aceitar conexões  
+            try:  
+                webbrowser.open(url)  
+            except Exception:  
+                logger.info("dashboard_auto_open_failed", url=url)  
+  
+        threading.Thread(target=_open, daemon=True).start()  
+  
+    @asynccontextmanager  
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  
+        """Startup do Gateway: liga o console de logs ao loop e abre o dashboard.  
+  
+        Substitui o antigo ``@app.on_event("startup")`` (deprecado no FastAPI):  
+        o código antes do ``yield`` roda no startup.  
+        """  
+        log_broadcaster.bind_loop(asyncio.get_running_loop())  
+        _maybe_open_browser()  
+        yield  
+  
+    app = FastAPI(  
+        title="MCP Gateway",  
+        version=APP_VERSION,  
+        docs_url=None,  
+        redoc_url=None,  
+        openapi_url=None,  
+        lifespan=lifespan,  
+    )   
 
     def _is_authorized(request: Request, token_override: str | None = None) -> bool:
         """Checa o token configurado contra o header Bearer e/ou ``?token=``.
@@ -1329,39 +1359,5 @@ def create_app(
             return JSONResponse(status_code=500, content={"detail": "Internal error"})
         finally:
             structlog.contextvars.clear_contextvars()
-
-    @app.on_event("startup")
-    async def _on_startup() -> None:
-        """Liga o console de logs ao loop e abre o dashboard no navegador.
-
-        Fase 7: o pedido era "o main abre a GUI" sem precisar reescrever o
-        entrypoint — como o Gateway já sobe via ``create_app`` neste módulo,
-        o auto-open mora aqui. Controlável por env var pra quem roda em
-        servidor/headless: ``MCP_GATEWAY_OPEN_BROWSER=false`` desliga;
-        ``MCP_GATEWAY_PORT`` informa a porta real do uvicorn (default 8080,
-        igual ao README) já que este módulo não sabe em que porta foi
-        montado.
-        """
-        log_broadcaster.bind_loop(asyncio.get_running_loop())
-
-        if os.environ.get("MCP_GATEWAY_OPEN_BROWSER", "true").strip().lower() in (
-            "0",
-            "false",
-            "no",
-        ):
-            return
-        port = os.environ.get("MCP_GATEWAY_PORT", "8080")
-        url = f"http://127.0.0.1:{port}/"
-        if auth_token:
-            url += f"?token={auth_token}"
-
-        def _open() -> None:
-            time.sleep(0.6)
-            try:
-                webbrowser.open(url)
-            except Exception:
-                logger.info("dashboard_auto_open_failed", url=url)
-
-        threading.Thread(target=_open, daemon=True).start()
 
     return app
