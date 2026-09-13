@@ -56,6 +56,7 @@ def test_render_dashboard_importado_com_backend() -> None:
             }  
         ],  
         token=None,  
+        gw_endpoint="http://127.0.0.1:8080/mcp",  
     )  
     assert 'class="card"' in html  
     assert 'data-name="backend-a"' in html  
