@@ -147,6 +147,11 @@ async def main() -> int:
             access_log=False,
         )
     )
+    # Fase 7 — botão "Sair do MCP" no dashboard: a rota POST /api/shutdown (em
+    # gateway/http_server.py) só marca server.should_exit = True, disparando
+    # o MESMO caminho de shutdown gracioso do Ctrl+C (finally abaixo cuida do
+    # resto). Guardada em app.state porque o app é criado antes do Server.
+    app.state.uvicorn_server = server
 
     _install_sigbreak_handler(server)
     try:

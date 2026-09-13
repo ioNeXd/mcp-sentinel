@@ -72,8 +72,16 @@ class BackendState:
             o backoff do próximo restart.
         last_restart_at: Timestamp monotônico do último restart iniciado, para
             observabilidade (``/api/servers``).
+        connected_since: Timestamp de relógio (``time.time()``) de quando o
+            backend entrou em RUNNING pela última vez — usado pela página de
+            detalhe do backend (Fase 7) para calcular uptime. ``None`` enquanto
+            nunca conectou.
         warn_disabled_logged: Guarda do aviso periódico do monitor para backends
             disabled (evita logar o mesmo aviso a cada ciclo).
+        terminal_logged: Guarda de ``backend_failed_terminal`` — sem isso, o
+            Health Monitor loga o mesmo erro TODO ciclo enquanto o backend
+            permanece FAILED (mesmo padrão de ``warn_disabled_logged``).
+            Resetado a cada start bem-sucedido (``_start_one``).
     """
 
     name: str
@@ -82,7 +90,9 @@ class BackendState:
     client: BaseClient | None = None
     consecutive_failures: int = 0
     last_restart_at: float | None = None
+    connected_since: float | None = None
     warn_disabled_logged: bool = False
+    terminal_logged: bool = False
 
 
 class BackendManager:
@@ -185,6 +195,7 @@ class BackendManager:
                     "url": backend_config.url,
                     "consecutive_failures": state.consecutive_failures,
                     "last_restart_at": state.last_restart_at,
+                    "connected_since": state.connected_since,
                     "tools_count": tools_count,
                     "resources_count": resources_count,
                     "prompts_count": prompts_count,
@@ -252,6 +263,45 @@ class BackendManager:
                 logger.error("backend_start_failed", backend=name, error=str(exc))
                 state.status = BackendStatus.OFFLINE
                 state.consecutive_failures = 1
+
+    async def remove_backend(self, backend_name: str) -> None:
+        """Remove um backend por completo, em tempo real (Fase 7).
+
+        Usado pelo botão "remover" do card no dashboard (``DELETE
+        /api/servers/{name}``). Diferente de ``disable()`` — que mantém o
+        backend no config em estado neutro — isto tira o backend inteiramente
+        do Gateway em memória: cancela restart pendente, para o client (se
+        houver) e apaga a entrada de ``_states``/``_restart_locks``. A remoção
+        do ``config.json`` em disco é responsabilidade do chamador HTTP (o
+        manager não sabe onde o config mora).
+
+        Idempotente do ponto de vista do manager não — chamar duas vezes
+        levanta ``BackendNotFoundError`` na segunda, o que é o comportamento
+        certo pra rota HTTP responder 404 em vez de 200 silencioso.
+
+        Raises:
+            BackendNotFoundError: backend não existe (já removido, ou nunca
+                existiu neste processo).
+        """
+        state = self._states.get(backend_name)
+        if state is None:
+            raise BackendNotFoundError(f"backend '{backend_name}' não existe")
+        pending = self._restart_tasks.get(backend_name)
+        if pending is not None and not pending.done():
+            pending.cancel()
+            try:
+                await pending
+            except asyncio.CancelledError:
+                pass
+            self._restart_tasks.pop(backend_name, None)
+        async with self._restart_locks[backend_name]:
+            state = self._states.get(backend_name)
+            if state is None:
+                raise BackendNotFoundError(f"backend '{backend_name}' não existe")
+            await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
+            del self._states[backend_name]
+        del self._restart_locks[backend_name]
+        logger.info("backend_removed", backend=backend_name)
 
     async def stop_all(self) -> None:
         """Cancela restarts pendentes, para os backends e limpa os registries.
@@ -322,7 +372,9 @@ class BackendManager:
             else:
                 logger.warning("backend_offline_sem_auto_restart", backend=backend_name)
         elif state.status is BackendStatus.FAILED:
-            self._log_terminal(state)
+            if not state.terminal_logged:
+                self._log_terminal(state)
+                state.terminal_logged = True
         return state.status
 
     async def _is_backend_alive(self, state: BackendState) -> bool:
@@ -412,7 +464,9 @@ class BackendManager:
                 return  # outro caminho já recuperou (ou falhou) este backend
             if state.consecutive_failures > self.config.max_restart_attempts:
                 state.status = BackendStatus.FAILED
-                self._log_terminal(state)
+                if not state.terminal_logged:
+                    self._log_terminal(state)
+                    state.terminal_logged = True
                 return
             delay = self._backoff_seconds(state.consecutive_failures)
             logger.info(
@@ -656,6 +710,8 @@ class BackendManager:
         state.status = BackendStatus.RUNNING
         state.consecutive_failures = 0
         state.warn_disabled_logged = False
+        state.terminal_logged = False
+        state.connected_since = time.time()
         logger.info(
             "backend_connected",
             backend=name,
