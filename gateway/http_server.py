@@ -116,8 +116,9 @@ button.act {
   flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);  
   padding: .35rem .5rem; border-radius: .4rem; font-size: .76rem; cursor: pointer;  
 }  
-button.act:hover { border-color: var(--accent); }  
-button.act:disabled { opacity: .4; cursor: not-allowed; }  
+button.act:hover { border-color: var(--accent); }
+button.act:disabled { opacity: .4; cursor: not-allowed; }
+
 #console-wrap {  
   background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;  
   overflow: hidden;  
@@ -341,32 +342,32 @@ def _render_dashboard(
 </header>
 <div id="conn-banner" class="conn-banner hidden">⚠ Conexão perdida com o Gateway — tentando reconectar…</div>
 </div>
-<main>  
-  <h2>Backends</h2>  
-  <div id="backends-grid">{cards_html}</div>  
-  
-  <h2>Console (logs ao vivo)</h2>  
-  <div id="console-wrap">  
-    <div id="console-toolbar">  
-      <span id="console-status">conectando…</span>  
-      <svg id="error-sparkline" width="60" height="16" class="hidden"></svg>  
-      <span id="error-rate" class="error-rate hidden">0 erros/min</span>  
-      <span class="grow"></span>  
-      <select id="console-level">  
-        <option value="all">Todos os níveis</option>  
-        <option value="debug">Debug</option>  
-        <option value="info">Info</option>  
-        <option value="warning">Warning</option>  
-        <option value="error">Error</option>  
-      </select>  
-      <input id="console-search" type="text" placeholder="Buscar… ( / )">  
-      <button id="console-clear-filter" class="hidden">Limpar filtro request_id</button>  
-      <button id="console-pause">Pausar</button>  
-      <button id="console-clear">Limpar</button>  
-    </div>  
-    <div id="console"><div class="empty">Aguardando eventos…</div></div>  
-  </div>  
-</main>  
+<main>
+  <h2>Backends</h2>
+  <div id="backends-grid">{cards_html}</div>
+
+  <h2>Console (logs ao vivo)</h2>
+  <div id="console-wrap">
+    <div id="console-toolbar">
+      <span id="console-status">conectando…</span>
+      <svg id="error-sparkline" width="60" height="16" class="hidden"></svg>
+      <span id="error-rate" class="error-rate hidden">0 erros/min</span>
+      <span class="grow"></span>
+      <select id="console-level">
+        <option value="all">Todos os níveis</option>
+        <option value="debug">Debug</option>
+        <option value="info">Info</option>
+        <option value="warning">Warning</option>
+        <option value="error">Error</option>
+      </select>
+      <input id="console-search" type="text" placeholder="Buscar… ( / )">
+      <button id="console-clear-filter" class="hidden">Limpar filtro request_id</button>
+      <button id="console-pause">Pausar</button>
+      <button id="console-clear">Limpar</button>
+    </div>
+    <div id="console"><div class="empty">Aguardando eventos…</div></div>
+  </div>
+</main>
 <div id="toast-container"></div>  
   
   
@@ -1237,7 +1238,22 @@ def create_app(
     auth_token: str | None = None,  
     max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,  
 ) -> FastAPI:  
-    """...docstring inalterada..."""  
+    """Monta a aplicação FastAPI do Gateway: rota MCP, dashboard e API HTTP.
+
+    Reúne tudo que fica exposto via HTTP: ``POST /mcp`` (JSON-RPC, ver
+    ``McpServer.process_message``), o dashboard interativo (``GET /``, Fase
+    7), a página de detalhe por backend (``GET /backend/{name}``), o console
+    de logs ao vivo (``GET /api/logs/stream``), e as rotas de controle/
+    observabilidade (``/api/servers``, ``/api/tools/size``,
+    ``/api/config/backends``, ``/api/shutdown``, ``/health``).
+
+    ``auth_token`` protege toda rota que expõe dado operacional (comandos,
+    urls, logs) — ``None`` roda sem autenticação (uso local).
+
+    Cada request HTTP ganha um ``request_id`` (UUID) vinculado via
+    contextvars; todos os logs da mesma requisição carregam o mesmo id
+    automaticamente (ver gateway.logging).
+    """  
   
     def _maybe_open_browser() -> None:  
         """Abre o dashboard no navegador, salvo em modo headless.  

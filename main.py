@@ -13,6 +13,11 @@ Sinais de shutdown: o uvicorn instala os handlers de SIGINT/SIGTERM e apenas
 marca ``should_exit`` (não sobrescrevemos esses sinais, para não conflitar com
 o próprio shutdown dele); no Windows completamos com o CTRL_BREAK (SIGBREAK)
 via ``_install_sigbreak_handler``.
+
+Roda no terminal e abre o dashboard no navegador (``gateway/http_server.py``
+cuida do auto-open) — o mesmo padrão que o resto do ecossistema MCP local já
+usa (OpenClaw, OpenHands etc.): processo no terminal, UI no navegador. Não há
+modo de janela nativa aqui.
 """
 
 import asyncio
@@ -39,6 +44,10 @@ from gateway.sessions import SessionFilter, SessionPurger
 DEFAULT_PORT = 8080
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_CONFIG_PATH = "config/config.json"
+GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5
+"""Prazo máximo que o uvicorn espera conexões abertas fecharem sozinhas antes
+de forçar. Sem isso, o console de logs (SSE, sempre aberto) trava o shutdown
+para sempre enquanto o dashboard estiver aberto em algum lugar."""
 
 logger = structlog.get_logger("main")
 
@@ -145,6 +154,14 @@ async def main() -> int:
             # ``?token=...``), redundante com o ``http_request_completed``
             # estruturado. Desligado para o token de query nunca vazar em log.
             access_log=False,
+            # Sem isso, o shutdown gracioso espera INDEFINIDAMENTE qualquer
+            # conexão aberta fechar sozinha — e o console de logs ao vivo
+            # (GET /api/logs/stream, SSE) nunca fecha por conta própria
+            # enquanto o dashboard estiver aberto em algum lugar (heartbeat a
+            # cada 15s). Sem esse teto, Ctrl+C e o botão "Sair do MCP" ficam
+            # travados pra sempre com o dashboard aberto. Depois desse prazo,
+            # o uvicorn força o fechamento das conexões que sobraram.
+            timeout_graceful_shutdown=GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS,
         )
     )
     # Fase 7 — botão "Sair do MCP" no dashboard: a rota POST /api/shutdown (em
