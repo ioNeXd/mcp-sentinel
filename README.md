@@ -291,6 +291,11 @@ python scripts/import_claude_desktop_config.py --prefix claude # evita colisão 
 - **Gravação segura:** nunca sobrescreve em silêncio (grava em  
   `config/config.imported.json`; destino existente exige `--force`); a escrita  
   é atômica. Revise e mescle no seu config — não há hot-reload.  
+- **Pela API do dashboard:** `POST /api/import/claude-desktop` mescla os  
+  backends convertidos no config atual e valida o resultado contra o schema  
+  do boot (`GatewayConfig`) **antes** de gravar; falha de schema → `422` e  
+  nada é gravado (mesmo portão do restore e do "Adicionar MCP" — nenhuma  
+  rota que escreve o config grava sem validar).  
   
 ---  
   
@@ -316,15 +321,21 @@ Além do `POST /mcp`, o Gateway expõe rotas de observabilidade e controle.
 curl -X POST http://127.0.0.1:8080/api/servers/backend-a/disable -H 'Authorization: Bearer SEU_TOKEN'  
 curl -X POST http://127.0.0.1:8080/api/servers/backend-a/enable  -H 'Authorization: Bearer SEU_TOKEN'  
 curl -X POST http://127.0.0.1:8080/api/servers/backend-a/restart -H 'Authorization: Bearer SEU_TOKEN'  
+curl -X DELETE http://127.0.0.1:8080/api/servers/backend-a -H 'Authorization: Bearer SEU_TOKEN'  
 ```  
   
 - `disable` para o backend e o tira do `tools/list` (o monitor não o reinicia).  
 - `enable` reverte, subindo e reintegrando o backend.  
 - `restart` funciona inclusive com o backend `running` (manutenção) ou  
   `failed` (única recuperação sem reiniciar o Gateway).  
+- `DELETE /api/servers/{name}` remove o backend **de vez**: para o client, o  
+  tira da memória e apaga a entrada do `config.json` (escrita atômica) —  
+  diferente de `disable`, que o mantém no config em estado neutro. Recusa  
+  remover o último backend (`409`): o schema exige ao menos um no boot, e a  
+  remoção é bloqueada **antes de qualquer efeito** (memória e disco intactos).  
   
-Códigos: `404` inexistente · `409` estado incompatível · `503` a subida falhou  
-· `401` sem token.  
+Códigos: `404` inexistente · `409` estado incompatível (e último backend no  
+DELETE) · `503` a subida falhou · `401` sem token.  
   
 **Estados de um backend:** `running`, `offline` (caiu), `restarting`  
 (aguardando backoff), `failed` (esgotou as tentativas — terminal) e `disabled`  
@@ -361,7 +372,9 @@ um item fora do filtro responde o **mesmo** erro de item inexistente (`-32001`,
 não vaza a existência). Nome de backend desconhecido → `-32602`. Método de  
 sessão sem o header → `-32600`. A sessão expira após `session_ttl_seconds` sem  
 atividade e volta a ver tudo (nunca bloqueia). O filtro é apenas uma view: os  
-registries globais seguem como fonte única de verdade.  
+registries globais seguem como fonte única de verdade. A tool nativa  
+`gateway.diagnose` não pertence a backend algum e permanece visível mesmo  
+com filtro ativo.  
   
 ---  
   
@@ -442,7 +455,9 @@ console ao vivo do dashboard.
 ## Testes  
   
 ```bash  
-pytest  
+pytest           # suíte completa  
+ruff check .     # lint  
+mypy             # type-checking (files= do pyproject.toml: gateway + main.py + scripts)  
 ```  
   
 A suíte usa **backends fake** (stdio, HTTP e SSE, como subprocessos reais, com a  
@@ -450,7 +465,10 @@ mesma semântica de protocolo) — nunca MCPs reais de terceiros. Cobre
 registries, handlers de tools/resources/prompts, validações HTTP, consistência  
 de `request_id`, ciclo de vida do `BackendManager`, detecção de queda e  
 auto-restart com backoff, rotas de observabilidade e controle, dashboard,  
-importador, filtro seletivo por sessão e shutdown sem processos órfãos.  
+importador, filtro seletivo por sessão e shutdown sem processos órfãos. Os  
+testes que executam o JS do dashboard (escape do XSS, handler de shutdown)  
+usam `node` quando disponível e pulam sem ele — com node no PATH a cobertura  
+é total.  
   
 ---  
   
