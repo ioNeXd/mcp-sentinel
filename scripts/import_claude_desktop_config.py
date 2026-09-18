@@ -25,8 +25,9 @@ Uso::
   
     python scripts/import_claude_desktop_config.py [CAMINHO] [opções]  
   
-    CAMINHO          config do Claude Desktop (default: %APPDATA%\\Claude\\  
-                     claude_desktop_config.json no Windows)  
+    CAMINHO          config do Claude Desktop (default: busca automatica nos  
+                     caminhos conhecidos -- instalacao classica ou MSIX no  
+                     Windows, macOS, Linux -- ver find_claude_desktop_config)  
     --output, -o     arquivo de destino (default: config/config.imported.json)  
     --force          sobrescreve o destino se ele já existir  
     --stdout         só imprime o JSON resultante (não grava nada)  
@@ -251,11 +252,50 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
     return gateway_config, warnings
 
 
-def _default_claude_config_path() -> Path | None:
-    """Caminho default do claude_desktop_config.json (Windows: %APPDATA%)."""
+def _candidate_claude_config_paths() -> list[Path]:
+    """Caminhos conhecidos do ``claude_desktop_config.json``, em ordem de checagem.
+
+    O Claude Desktop no Windows pode estar instalado de duas formas bem
+    diferentes, que resultam em caminhos completamente distintos:
+
+    - **instalador clássico**: ``%APPDATA%\\Claude\\claude_desktop_config.json``;
+    - **pacote MSIX** (Microsoft Store / algumas distribuições): o app roda em
+      sandbox e o config real fica em
+      ``%LOCALAPPDATA%\\Packages\\Claude_<hash>\\LocalCache\\Roaming\\Claude\\
+      claude_desktop_config.json`` — o ``<hash>`` varia por instalação, então a
+      busca usa um glob (``Claude_*``) em vez de um caminho fixo.
+
+    Cobre também macOS e Linux (o Gateway hoje só é testado no Windows, mas a
+    checagem é barata e não custa nada incluir).
+    """
+    candidates: list[Path] = []
     appdata = os.environ.get("APPDATA")
     if appdata:
-        return Path(appdata) / "Claude" / "claude_desktop_config.json"
+        candidates.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
+    localappdata = os.environ.get("LOCALAPPDATA")
+    if localappdata:
+        packages_dir = Path(localappdata) / "Packages"
+        if packages_dir.is_dir():
+            for entry in sorted(packages_dir.glob("Claude_*")):
+                candidates.append(
+                    entry / "LocalCache" / "Roaming" / "Claude" / "claude_desktop_config.json"
+                )
+    home = Path.home()
+    candidates.append(
+        home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+    )
+    candidates.append(home / ".config" / "Claude" / "claude_desktop_config.json")
+    return candidates
+
+
+def find_claude_desktop_config() -> Path | None:
+    """Primeiro caminho candidato (ver ``_candidate_claude_config_paths``) que
+    existe de fato no disco, ou ``None`` se nenhum bater — quem chama decide
+    o que fazer nesse caso (CLI pede pra informar manualmente; o dashboard
+    abre um campo pra apontar o arquivo)."""
+    for candidate in _candidate_claude_config_paths():
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -348,11 +388,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     options = parser.parse_args(argv)
 
-    source = Path(options.config) if options.config else _default_claude_config_path()
+    source = Path(options.config) if options.config else find_claude_desktop_config()
     if source is None:
         parser.error(
-            "informe o caminho do claude_desktop_config.json "
-            "(não foi possível determinar o default: APPDATA não definida)"
+            "não encontrei o claude_desktop_config.json em nenhum dos caminhos "
+            "conhecidos (instalação clássica ou MSIX) — informe o caminho "
+            "manualmente como argumento"
         )
     if not source.exists():
         print(f"ERRO: arquivo não encontrado: {source}", file=sys.stderr)

@@ -63,6 +63,32 @@ logger = structlog.get_logger(__name__)
 SERVER_NAME = "mcp-gateway"
 SERVER_VERSION = __version__
 
+DIAGNOSTIC_TOOL_NAME = "gateway.diagnose"
+"""Nome da tool de auto-diagnóstico do próprio Gateway (Fase 8).
+
+Namespace ``gateway.`` reservado — não colide com backends reais (nomes de
+backend seguem ``BACKEND_NAME_PATTERN``, sem ``.``, então nenhum backend real
+jamais produz um item namespaced começando por ``gateway.``). Interceptada
+ANTES do lookup no ``ToolRegistry`` em ambos ``tools/list`` e ``tools/call`` —
+não é uma tool de nenhum backend, é nativa do Gateway.
+"""
+
+DIAGNOSTIC_TOOL_PAYLOAD: dict[str, Any] = {
+    "name": DIAGNOSTIC_TOOL_NAME,
+    "description": (
+        "Diagnóstico de saúde do próprio MCP Gateway (não dos backends "
+        "individuais, que já têm resources/tools próprios). Devolve versão, "
+        "tempo ativo, contagem de backends por status, total de "
+        "tools/resources/prompts agregados e sessões ativas do filtro "
+        "seletivo. Útil para um agente conectado verificar rapidamente se o "
+        "Gateway em si está saudável antes de operar sobre ele."
+    ),
+    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+}
+"""Payload anunciado em ``tools/list`` — sempre visível, mesmo sob filtro de
+sessão (Fase 5): é uma capacidade do Gateway, não de um backend específico,
+então não faz sentido escondê-la por trás do filtro seletivo de backends."""
+
 # Divisor heurístico para estimar tokens a partir de caracteres JSON (~4 chars
 # por token). Estimativa grosseira de diagnóstico, não substitui um tokenizer
 # real (ver GET /api/tools/size no README).
@@ -107,9 +133,14 @@ class McpServer:
             if session_filter is not None
             else SessionFilter(_DEFAULT_SESSION_TTL_SECONDS)
         )
+        self._started_at: float | None = None
+        """Relógio de parede (``time.time()``) de quando ``start()`` rodou —
+        usado só pelo ``gateway.diagnose`` para reportar tempo ativo do
+        próprio Gateway. ``None`` antes do primeiro ``start()``."""
 
     async def start(self) -> None:
         """Sobe todos os backends via BackendManager (handshake + registries)."""
+        self._started_at = time.time()
         await self.backend_manager.start_all()
         logger.info(
             "gateway_ready",
@@ -201,9 +232,12 @@ class McpServer:
                 request.id,
                 {
                     "tools": [
-                        payload
-                        for entry in self._visible(self._tools.list_all(), session_id)
-                        if (payload := self._tool_payload(entry)) is not None
+                        DIAGNOSTIC_TOOL_PAYLOAD,
+                        *(
+                            payload
+                            for entry in self._visible(self._tools.list_all(), session_id)
+                            if (payload := self._tool_payload(entry)) is not None
+                        ),
                     ]
                 },
             )
@@ -398,6 +432,20 @@ class McpServer:
             return make_error(
                 request.id, INVALID_PARAMS, "Invalid params: 'name' (string) é obrigatório"
             )
+        if tool_name == DIAGNOSTIC_TOOL_NAME:
+            logger.info("request_dispatched", method="tools/call", item=DIAGNOSTIC_TOOL_NAME)
+            return make_result(
+                request.id,
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(self._diagnose(), indent=2, ensure_ascii=False),
+                        }
+                    ],
+                    "isError": False,
+                },
+            )
         arguments = params.get("arguments")
         if arguments is not None and not isinstance(arguments, dict):
             return make_error(
@@ -539,6 +587,34 @@ class McpServer:
     # ------------------------------------------------------------------
     # Helpers de validação/serialização
     # ------------------------------------------------------------------
+
+    def _diagnose(self) -> dict[str, Any]:
+        """Monta o payload de ``gateway.diagnose`` (Fase 8).
+
+        Deliberadamente sobre o GATEWAY em si, não sobre um backend
+        específico (isso já existe via ``/api/servers``/``tools/list`` por
+        backend) — versão, tempo ativo, resumo agregado de saúde
+        (``BackendManager.health_summary``), totais de tools/resources/
+        prompts, e quantas sessões do filtro seletivo (Fase 5) estão ativas
+        agora. Não faz nenhuma chamada de rede nem toca em nenhum backend —
+        é só leitura de estado já em memória, então sempre responde rápido
+        mesmo se algum backend estiver travado.
+        """
+        uptime_seconds = (
+            round(time.time() - self._started_at, 1) if self._started_at is not None else None
+        )
+        summary = self.backend_manager.health_summary()
+        return {
+            "server": SERVER_NAME,
+            "version": SERVER_VERSION,
+            "uptime_seconds": uptime_seconds,
+            "status": summary.get("status"),
+            "backends_by_status": summary.get("backends", {}),
+            "tools_count": len(self._tools.list_all()),
+            "resources_count": len(self._resources.list_all()),
+            "prompts_count": len(self._prompts.list_all()),
+            "active_sessions": self.sessions.session_count(),
+        }
 
     def tools_list_size(self, session_id: str | None = None) -> dict[str, Any]:
         """Diagnóstico (Fase 5): tamanho do ``tools/list`` desta sessão/all.

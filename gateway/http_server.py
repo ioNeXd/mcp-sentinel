@@ -31,13 +31,15 @@ import threading
 import time
 import uuid
 import webbrowser
+from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from pydantic import ValidationError
 
-from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES, BackendConfig
+from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES, BackendConfig, GatewayConfig
 from gateway.errors import (
     BackendError,
     BackendNotFoundError,
@@ -76,7 +78,7 @@ body {
 header {  
   display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;  
   padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);  
-  position: sticky; top: 0; background: var(--bg); z-index: 5;  
+  background: var(--bg);  
 }  
 header h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }  
 .pill {  
@@ -182,7 +184,12 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
 .error.hidden { display: none; }  
 .modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }  
 .modal-actions button { padding: .4rem .9rem; border-radius: .4rem; font-size: .82rem; cursor: pointer; }  
-#cancel-add-mcp { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }  
+#cancel-add-mcp { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.checkbox-label { display: flex !important; align-items: center; gap: .5rem; flex-direction: row-reverse; justify-content: flex-end; }
+.checkbox-label input { width: auto; margin: 0; }
+.settings-divider { border-top: 1px solid var(--border); margin: 1.1rem 0; }
+#backup-restore h4 { font-size: .82rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 0 0 .6rem; }
+#cancel-settings { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }  
   
 .conn-banner {
   background: var(--err); color: #fff; text-align: center; font-size: .85rem;
@@ -337,6 +344,8 @@ def _render_dashboard(
   <label class="switch"><input type="checkbox" id="density-toggle"><span>Compacto</span></label>
   <label class="switch"><input type="checkbox" id="readonly-toggle"><span>Somente leitura</span></label>
   <button id="export-snapshot" class="btn-secondary" title="Baixar JSON com /health + /api/servers + /api/tools/size">Exportar snapshot</button>
+  <button id="open-settings" class="btn-secondary">⚙ Configurações</button>
+  <button id="open-import-claude" class="btn-secondary">Importar Claude Desktop</button>
   <button id="open-add-mcp" class="btn-primary">+ Adicionar MCP</button>
   <button id="shutdown-gateway" class="btn-danger" title="Encerra o processo do Gateway (graceful shutdown)">Sair do MCP</button>
 </header>
@@ -408,9 +417,83 @@ def _render_dashboard(
         <button type="submit" id="submit-add-mcp" class="btn-primary">Adicionar</button>  
       </div>  
     </form>  
-  </div>  
-</div>  
-  
+  </div>
+</div>
+
+<div id="settings-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Configurações</h3>
+      <button id="close-settings" class="btn-icon">&times;</button>
+    </div>
+    <form id="settings-form">
+      <label>Auth token (vazio = sem autenticação)
+        <input type="text" name="auth_token" placeholder="deixe vazio para desligar a auth">
+      </label>
+      <label>Payload máximo do POST /mcp (bytes)
+        <input type="number" name="max_payload_bytes" min="1">
+      </label>
+      <label>Intervalo do Health Monitor (segundos)
+        <input type="number" name="health_check_interval_seconds" min="0.1" step="0.1">
+      </label>
+      <label>Timeout de request a um backend (segundos, vazio = usar o default de 30s)
+        <input type="number" name="backend_request_timeout_seconds" min="0.1" step="0.1" placeholder="30">
+      </label>
+      <label>Tentativas de restart antes de "failed"
+        <input type="number" name="max_restart_attempts" min="1" step="1">
+      </label>
+      <label>TTL de sessão do filtro seletivo (segundos)
+        <input type="number" name="session_ttl_seconds" min="1" step="1">
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="auto_restart"> Reiniciar backends offline automaticamente
+      </label>
+      <p id="settings-hint" class="hint">Grava no config.json — reinicie o Gateway para aplicar.</p>
+      <p id="settings-error" class="error hidden"></p>
+      <div class="modal-actions">
+        <button type="button" id="cancel-settings">Cancelar</button>
+        <button type="submit" id="submit-settings" class="btn-primary">Salvar</button>
+      </div>
+    </form>
+    <div class="settings-divider"></div>
+    <div id="backup-restore">
+      <h4>Backup do config.json</h4>
+      <div class="modal-actions" style="justify-content: flex-start;">
+        <button type="button" id="download-backup" class="btn-secondary">Baixar backup</button>
+        <label class="btn-secondary" id="restore-label" style="cursor:pointer;">
+          Restaurar de um backup
+          <input type="file" id="restore-file" accept="application/json" style="display:none;">
+        </label>
+      </div>
+      <p id="restore-error" class="error hidden"></p>
+      <p id="restore-hint" class="hint">Restaurar substitui o config.json inteiro (backends inclusos) — valida antes de gravar. Reinicie o Gateway depois.</p>
+    </div>
+  </div>
+</div>
+
+<div id="import-claude-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Importar Claude Desktop</h3>
+      <button id="close-import-claude" class="btn-icon">&times;</button>
+    </div>
+    <p id="import-claude-detect-status" class="hint">Procurando o claude_desktop_config.json…</p>
+    <form id="import-claude-form">
+      <label>Caminho do claude_desktop_config.json
+        <input type="text" name="path" id="import-claude-path" placeholder="será preenchido automaticamente se encontrado">
+      </label>
+      <label>Prefixo dos backends importados (opcional)
+        <input type="text" name="prefix" placeholder="ex: claude">
+      </label>
+      <p id="import-claude-error" class="error hidden"></p>
+      <div class="modal-actions">
+        <button type="button" id="cancel-import-claude">Cancelar</button>
+        <button type="submit" id="submit-import-claude" class="btn-primary">Importar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <script>  
 const GW_TOKEN = {token_js};  
 const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};  
@@ -724,6 +807,197 @@ document.addEventListener("keydown", (ev) => {{
   if (ev.key === "r") {{ refresh(); }}  
   else if (ev.key === "/") {{ ev.preventDefault(); document.getElementById("console-search").focus(); }}  
 }});  
+
+// ---- Modal "Configurações" ----
+const settingsOverlay = document.getElementById("settings-overlay");
+const settingsForm = document.getElementById("settings-form");
+const settingsErrorEl = document.getElementById("settings-error");
+const settingsSubmitBtn = document.getElementById("submit-settings");
+
+async function openSettingsModal() {{
+  settingsErrorEl.classList.add("hidden");
+  settingsOverlay.classList.remove("hidden");
+  try {{
+    const res = await fetch("/api/config/settings", {{ headers: AUTH_HEADERS }});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    for (const [key, value] of Object.entries(data)) {{
+      const field = settingsForm.elements[key];
+      if (!field) continue;
+      if (field.type === "checkbox") field.checked = !!value;
+      else field.value = (value === null || value === undefined) ? "" : value;
+    }}
+  }} catch (e) {{
+    settingsErrorEl.textContent = "Não consegui carregar as configurações atuais.";
+    settingsErrorEl.classList.remove("hidden");
+  }}
+}}
+function closeSettingsModal() {{ settingsOverlay.classList.add("hidden"); }}
+
+document.getElementById("open-settings").addEventListener("click", openSettingsModal);
+document.getElementById("close-settings").addEventListener("click", closeSettingsModal);
+document.getElementById("cancel-settings").addEventListener("click", closeSettingsModal);
+settingsOverlay.addEventListener("click", (ev) => {{ if (ev.target === settingsOverlay) closeSettingsModal(); }});
+
+settingsForm.addEventListener("submit", async (ev) => {{
+  ev.preventDefault();
+  settingsErrorEl.classList.add("hidden");
+  const data = new FormData(settingsForm);
+  const payload = {{
+    auth_token: data.get("auth_token") || null,
+    max_payload_bytes: Number(data.get("max_payload_bytes")),
+    health_check_interval_seconds: Number(data.get("health_check_interval_seconds")),
+    max_restart_attempts: Number(data.get("max_restart_attempts")),
+    session_ttl_seconds: Number(data.get("session_ttl_seconds")),
+    auto_restart: settingsForm.elements["auto_restart"].checked,
+  }};
+  const timeoutRaw = data.get("backend_request_timeout_seconds");
+  payload.backend_request_timeout_seconds = timeoutRaw ? Number(timeoutRaw) : null;
+
+  settingsSubmitBtn.disabled = true;
+  settingsSubmitBtn.textContent = "Salvando…";
+  try {{
+    const res = await fetch("/api/config/settings", {{
+      method: "PUT",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: JSON.stringify(payload),
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (!res.ok) {{
+      settingsErrorEl.textContent = body.detail || `Erro ${{res.status}}`;
+      settingsErrorEl.classList.remove("hidden");
+      return;
+    }}
+    closeSettingsModal();
+    alert(body.detail || "Configurações salvas. Reinicie o Gateway para aplicar.");
+  }} catch (e) {{
+    settingsErrorEl.textContent = "Erro de rede ao salvar.";
+    settingsErrorEl.classList.remove("hidden");
+  }} finally {{
+    settingsSubmitBtn.disabled = false;
+    settingsSubmitBtn.textContent = "Salvar";
+  }}
+}});
+
+// ---- Backup / restore do config.json ----
+document.getElementById("download-backup").addEventListener("click", async () => {{
+  const btn = document.getElementById("download-backup");
+  btn.disabled = true;
+  try {{
+    const res = await fetch("/api/config/backup", {{ headers: AUTH_HEADERS }});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const blob = new Blob([text], {{ type: "application/json" }});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mcp-gateway-config-backup-${{Date.now()}}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }} catch (e) {{
+    alert("Erro ao baixar o backup.");
+  }} finally {{
+    btn.disabled = false;
+  }}
+}});
+
+document.getElementById("restore-file").addEventListener("change", async (ev) => {{
+  const restoreErrorEl = document.getElementById("restore-error");
+  restoreErrorEl.classList.add("hidden");
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (!confirm(`Restaurar "${{file.name}}"? Isso SUBSTITUI o config.json inteiro (todos os backends). Precisa reiniciar o Gateway depois. Continuar?`)) {{
+    ev.target.value = "";
+    return;
+  }}
+  try {{
+    const text = await file.text();
+    const res = await fetch("/api/config/restore", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: text,
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (!res.ok) {{
+      restoreErrorEl.textContent = body.detail || `Erro ${{res.status}}`;
+      restoreErrorEl.classList.remove("hidden");
+      return;
+    }}
+    alert(body.detail || "Config restaurado. Reinicie o Gateway para aplicar.");
+  }} catch (e) {{
+    restoreErrorEl.textContent = "Erro de rede ou arquivo inválido.";
+    restoreErrorEl.classList.remove("hidden");
+  }} finally {{
+    ev.target.value = "";
+  }}
+}});
+
+// ---- Modal "Importar Claude Desktop" ----
+const importClaudeOverlay = document.getElementById("import-claude-overlay");
+const importClaudeForm = document.getElementById("import-claude-form");
+const importClaudeErrorEl = document.getElementById("import-claude-error");
+const importClaudeSubmitBtn = document.getElementById("submit-import-claude");
+const importClaudeDetectStatus = document.getElementById("import-claude-detect-status");
+
+async function openImportClaudeModal() {{
+  importClaudeErrorEl.classList.add("hidden");
+  importClaudeForm.reset();
+  importClaudeOverlay.classList.remove("hidden");
+  importClaudeDetectStatus.textContent = "Procurando o claude_desktop_config.json…";
+  try {{
+    const res = await fetch("/api/import/claude-desktop/detect", {{ headers: AUTH_HEADERS }});
+    const data = await res.json();
+    if (data.found) {{
+      document.getElementById("import-claude-path").value = data.path;
+      importClaudeDetectStatus.textContent = `Encontrado em: ${{data.path}}`;
+    }} else {{
+      importClaudeDetectStatus.textContent = "Não encontrei automaticamente — informe o caminho abaixo.";
+    }}
+  }} catch (e) {{
+    importClaudeDetectStatus.textContent = "Não consegui buscar automaticamente — informe o caminho abaixo.";
+  }}
+}}
+function closeImportClaudeModal() {{ importClaudeOverlay.classList.add("hidden"); }}
+
+document.getElementById("open-import-claude").addEventListener("click", openImportClaudeModal);
+document.getElementById("close-import-claude").addEventListener("click", closeImportClaudeModal);
+document.getElementById("cancel-import-claude").addEventListener("click", closeImportClaudeModal);
+importClaudeOverlay.addEventListener("click", (ev) => {{ if (ev.target === importClaudeOverlay) closeImportClaudeModal(); }});
+
+importClaudeForm.addEventListener("submit", async (ev) => {{
+  ev.preventDefault();
+  importClaudeErrorEl.classList.add("hidden");
+  const data = new FormData(importClaudeForm);
+  const payload = {{ path: data.get("path") || null, prefix: data.get("prefix") || "" }};
+  importClaudeSubmitBtn.disabled = true;
+  importClaudeSubmitBtn.textContent = "Importando…";
+  try {{
+    const res = await fetch("/api/import/claude-desktop", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: JSON.stringify(payload),
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (!res.ok) {{
+      importClaudeErrorEl.textContent = body.detail || `Erro ${{res.status}}`;
+      importClaudeErrorEl.classList.remove("hidden");
+      return;
+    }}
+    closeImportClaudeModal();
+    let msg = body.detail || "Importado.";
+    if (body.warnings && body.warnings.length) {{
+      msg += "\\n\\nAvisos:\\n" + body.warnings.join("\\n");
+    }}
+    alert(msg);
+  }} catch (e) {{
+    importClaudeErrorEl.textContent = "Erro de rede ao importar.";
+    importClaudeErrorEl.classList.remove("hidden");
+  }} finally {{
+    importClaudeSubmitBtn.disabled = false;
+    importClaudeSubmitBtn.textContent = "Importar";
+  }}
+}});
+
   
   
 // ---- Console de logs ao vivo (SSE) ----  
@@ -1127,11 +1401,59 @@ def _render_backend_detail(
 
   <h2>Prompts ({len(entries.get("prompts", []))})</h2>
   {prompts_html}
+
+  <h2>Histórico (últimos ciclos do Health Monitor)</h2>
+  <div id="history-wrap" class="info-card">
+    <div id="history-status" class="hint">Carregando histórico…</div>
+    <svg id="history-chart" width="100%" height="90" viewBox="0 0 600 90" preserveAspectRatio="none" style="display:none; margin-top:.5rem;"></svg>
+    <div id="history-timeline" style="display:flex; gap:1px; margin-top:.6rem;"></div>
+  </div>
 </main>
 <script>
 const GW_TOKEN = {token_js};
 const BACKEND_NAME = {name_js};
 const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};
+
+const STATUS_COLOR = {{
+  running: "#34c77b", restarting: "#e0a63a", offline: "#e05a5a",
+  failed: "#e05a5a", disabled: "#6b7284",
+}};
+
+async function loadHistory() {{
+  const statusEl = document.getElementById("history-status");
+  const chartEl = document.getElementById("history-chart");
+  const timelineEl = document.getElementById("history-timeline");
+  try {{
+    const res = await fetch(`/api/servers/${{encodeURIComponent(BACKEND_NAME)}}/history`, {{ headers: AUTH_HEADERS }});
+    const data = await res.json();
+    const samples = data.samples || [];
+    if (!samples.length) {{
+      statusEl.textContent = "Sem amostras ainda — aguarde alguns ciclos do Health Monitor.";
+      return;
+    }}
+    statusEl.textContent = `${{samples.length}} amostra(s) — últimas ${{Math.round((samples[samples.length-1].timestamp - samples[0].timestamp) / 60)}}min`;
+
+    // Timeline de status: um bloco colorido por amostra, mais recente à direita.
+    timelineEl.innerHTML = samples.map(s =>
+      `<div title="${{s.status}} — ${{new Date(s.timestamp * 1000).toLocaleTimeString()}}" style="flex:1; height:14px; background:${{STATUS_COLOR[s.status] || '#6b7284'}};"></div>`
+    ).join("");
+
+    // Sparkline de latência: só pontos onde houve ping de verdade (latency_ms != null).
+    const latencyPoints = samples.map((s, i) => ({{i, v: s.latency_ms}})).filter(p => p.v !== null && p.v !== undefined);
+    if (latencyPoints.length >= 2) {{
+      const maxV = Math.max(1, ...latencyPoints.map(p => p.v));
+      const stepX = 600 / Math.max(1, samples.length - 1);
+      const pts = latencyPoints.map(p => `${{(p.i * stepX).toFixed(1)}},${{(85 - (p.v / maxV) * 80).toFixed(1)}}`).join(" ");
+      chartEl.innerHTML = `<polyline points="${{pts}}" fill="none" stroke="#5b8cff" stroke-width="2" />`;
+      chartEl.style.display = "block";
+      statusEl.textContent += ` — latência atual: ${{latencyPoints[latencyPoints.length-1].v.toFixed(1)}}ms (máx no período: ${{maxV.toFixed(1)}}ms)`;
+    }}
+  }} catch (e) {{
+    statusEl.textContent = "Não consegui carregar o histórico.";
+  }}
+}}
+loadHistory();
+setInterval(loadHistory, 10000);
 
 const uptimeEl = document.getElementById("uptime");
 if (uptimeEl) {{
@@ -1514,6 +1836,20 @@ def create_app(
             request, name, "restart", lambda: mcp_server.backend_manager.restart(name)
         )
 
+    @app.get("/api/servers/{name}/history")
+    async def backend_history(name: str, request: Request) -> JSONResponse:
+        """Histórico de status/latência de um backend (Fase 8).
+
+        Uma amostra por ciclo do Health Monitor (``BackendManager.
+        history_for``), em memória — reinicia com o Gateway. Lista vazia
+        (não erro) quando o backend nunca passou por um ciclo ainda, ex.:
+        acabou de ser adicionado.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route=f"/api/servers/{name}/history")
+            return _unauthorized()
+        return JSONResponse(content={"samples": mcp_server.backend_manager.history_for(name)})
+
     @app.delete("/api/servers/{name}")
     async def remove_backend_route(name: str, request: Request) -> JSONResponse:
         """Remove um backend por completo (Fase 7 — botão × do card).
@@ -1563,6 +1899,302 @@ def create_app(
             )
         logger.info("backend_removed_via_dashboard", backend=name)
         return JSONResponse(content={"detail": f"'{name}' removido do Gateway e de {config_path}."})
+
+    _SETTINGS_FIELDS = (
+        "auth_token",
+        "max_payload_bytes",
+        "health_check_interval_seconds",
+        "backend_request_timeout_seconds",
+        "auto_restart",
+        "max_restart_attempts",
+        "session_ttl_seconds",
+    )
+    """Campos de config.json editáveis pela página de Configurações (Fase 8).
+
+    Deliberadamente NÃO inclui ``backends`` (isso é o painel "Adicionar MCP" +
+    o botão de remover, que já têm seu próprio fluxo com start/stop ao vivo).
+    Nenhum destes campos é aplicado a quente — todos exigem reiniciar o
+    Gateway, igual a editar o config.json na mão hoje.
+    """
+
+    @app.get("/api/config/settings")
+    async def get_settings(request: Request) -> JSONResponse:
+        """Devolve os campos de config.json editáveis pela página de Configurações."""
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/settings")
+            return _unauthorized()
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_config = json.load(f)
+        except FileNotFoundError:
+            return JSONResponse(
+                status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
+            )
+        except json.JSONDecodeError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"config.json inválido: {exc}"}
+            )
+        return JSONResponse(content={key: raw_config.get(key) for key in _SETTINGS_FIELDS})
+
+    @app.put("/api/config/settings")
+    async def update_settings(request: Request) -> JSONResponse:
+        """Grava os campos globais (não-backend) no config.json (Fase 8).
+
+        Valida o resultado inteiro via ``GatewayConfig.model_validate`` antes
+        de gravar — os mesmos limites/tipos que o ``main.py`` exige no boot
+        (ex.: ``max_restart_attempts >= 1``) são aplicados aqui, então um
+        valor inválido nunca chega a virar um config.json que falharia ao
+        subir. Escrita atômica, mesmo padrão das outras rotas de config.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/settings")
+            return _unauthorized()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
+        if not isinstance(payload, dict):
+            return JSONResponse(status_code=422, content={"detail": "corpo deve ser um objeto JSON"})
+
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_config = json.load(f)
+        except FileNotFoundError:
+            return JSONResponse(
+                status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
+            )
+        except json.JSONDecodeError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"config.json inválido: {exc}"}
+            )
+
+        updated = dict(raw_config)
+        for key in _SETTINGS_FIELDS:
+            if key in payload:
+                updated[key] = payload[key]
+
+        try:
+            GatewayConfig.model_validate(updated)
+        except ValidationError as exc:
+            return JSONResponse(
+                status_code=422, content={"detail": f"configuração inválida: {exc}"}
+            )
+
+        tmp_path = f"{config_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(updated, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp_path, config_path)
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+            )
+
+        logger.info("settings_updated_via_dashboard")
+        return JSONResponse(
+            content={"detail": "Configurações salvas. Reinicie o Gateway para aplicar."}
+        )
+
+    @app.get("/api/config/backup")
+    async def config_backup(request: Request) -> Response:
+        """Devolve o ``config.json`` bruto (Fase 8 — botão "Baixar backup").
+
+        Conteúdo idêntico ao arquivo em disco, sem reformatação — o backup
+        baixado é byte-a-byte o que estava salvo no momento do clique.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/backup")
+            return _unauthorized()
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"falha ao ler config: {exc}"}
+            )
+        return Response(content=raw_text, media_type="application/json")
+
+    @app.post("/api/config/restore")
+    async def config_restore(request: Request) -> JSONResponse:
+        """Restaura o ``config.json`` inteiro a partir de um backup (Fase 8).
+
+        Valida o arquivo inteiro via ``GatewayConfig.model_validate`` ANTES de
+        gravar qualquer coisa — um backup corrompido ou de um schema
+        incompatível nunca chega a sobrescrever o config.json real. Escrita
+        atômica. Não sobe/derruba backend nenhum em tempo real (diferente do
+        "Adicionar MCP") — restaurar troca o arquivo; aplicar exige reiniciar
+        o Gateway, como qualquer outra edição de config global.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/restore")
+            return _unauthorized()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
+
+        try:
+            GatewayConfig.model_validate(payload)
+        except ValidationError as exc:
+            return JSONResponse(
+                status_code=422, content={"detail": f"backup inválido, nada foi gravado: {exc}"}
+            )
+
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        tmp_path = f"{config_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp_path, config_path)
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+            )
+
+        logger.warning("config_restored_via_dashboard", backends=len(payload.get("backends", [])))
+        return JSONResponse(
+            content={"detail": "Config restaurado. Reinicie o Gateway para aplicar."}
+        )
+
+    @app.get("/api/import/claude-desktop/detect")
+    async def import_claude_detect(request: Request) -> JSONResponse:
+        """Busca o claude_desktop_config.json nos caminhos conhecidos (Fase 8).
+
+        Cobre instalação clássica e MSIX no Windows, além de macOS/Linux — ver
+        ``scripts/import_claude_desktop_config.find_claude_desktop_config``.
+        Só informa se achou e onde; não lê nem converte nada ainda (isso é o
+        ``POST`` desta mesma família de rotas).
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/import/claude-desktop/detect")
+            return _unauthorized()
+        try:
+            from scripts.import_claude_desktop_config import find_claude_desktop_config
+        except ImportError as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"script de importação indisponível: {exc}"},
+            )
+        found = find_claude_desktop_config()
+        return JSONResponse(content={"found": found is not None, "path": str(found) if found else None})
+
+    @app.post("/api/import/claude-desktop")
+    async def import_claude_desktop(request: Request) -> JSONResponse:
+        """Importa o claude_desktop_config.json pro config.json do Gateway (Fase 8).
+
+        Reaproveita ``import_config`` do script de linha de comando (mesma
+        lógica, mesmos avisos) — a diferença é o destino: em vez de gravar um
+        arquivo separado pra revisão manual, MESCLA os backends convertidos
+        direto no ``config.json`` real, pulando qualquer nome que já exista
+        (em memória ou em disco — mesma checagem de duplicata do "Adicionar
+        MCP"). Nunca sobrescreve um backend existente silenciosamente.
+
+        Não sobe nada em tempo real (diferente do "Adicionar MCP") — são
+        potencialmente vários backends de uma vez, então a aplicação fica
+        pra um restart do Gateway, com o operador revisando os avisos antes.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/import/claude-desktop")
+            return _unauthorized()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
+        if not isinstance(payload, dict):
+            payload = {}
+
+        try:
+            from scripts.import_claude_desktop_config import (
+                find_claude_desktop_config,
+                import_config,
+            )
+        except ImportError as exc:
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"script de importação indisponível: {exc}"},
+            )
+
+        path_raw = payload.get("path")
+        source_path = Path(path_raw) if path_raw else find_claude_desktop_config()
+        if source_path is None:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": (
+                        "não encontrei o claude_desktop_config.json em nenhum caminho"
+                        " conhecido — informe o caminho manualmente"
+                    )
+                },
+            )
+        if not source_path.exists():
+            return JSONResponse(
+                status_code=404, content={"detail": f"arquivo não encontrado: {source_path}"}
+            )
+
+        prefix = payload.get("prefix") or ""
+        try:
+            imported, warnings = import_config(source_path, prefix=str(prefix))
+        except ValueError as exc:
+            return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_config = json.load(f)
+        except FileNotFoundError:
+            return JSONResponse(
+                status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
+            )
+        except json.JSONDecodeError as exc:
+            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
+
+        existing_backends = raw_config.setdefault("backends", [])
+        existing_names = {s["name"] for s in mcp_server.backend_manager.server_details()} | {
+            b.get("name") for b in existing_backends
+        }
+        added: list[str] = []
+        skipped: list[str] = []
+        for backend in imported["backends"]:
+            if backend["name"] in existing_names:
+                skipped.append(backend["name"])
+                continue
+            existing_backends.append(backend)
+            existing_names.add(backend["name"])
+            added.append(backend["name"])
+
+        if added:
+            tmp_path = f"{config_path}.tmp"
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    json.dump(raw_config, f, indent=2, ensure_ascii=False)
+                    f.write("\n")
+                os.replace(tmp_path, config_path)
+            except OSError as exc:
+                return JSONResponse(
+                    status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+                )
+
+        logger.info(
+            "claude_desktop_imported", source=str(source_path), added=len(added), skipped=len(skipped)
+        )
+        detail = f"{len(added)} backend(s) importado(s) de {source_path}."
+        if skipped:
+            detail += f" {len(skipped)} pulado(s) por nome já existente: {', '.join(skipped)}."
+        if added:
+            detail += " Reinicie o Gateway para aplicar."
+        return JSONResponse(
+            content={
+                "detail": detail,
+                "added": added,
+                "skipped": skipped,
+                "warnings": warnings,
+            }
+        )
 
     @app.post("/api/config/backends")
     async def add_backend_config(request: Request) -> JSONResponse:

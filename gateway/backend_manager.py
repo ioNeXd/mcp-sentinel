@@ -11,6 +11,7 @@ sempre enxergam um snapshot consistente, sem locks e sem itens órfãos/obsoleto
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -34,6 +35,11 @@ MAX_BACKOFF_SECONDS = 30.0
 BACKOFF_MULTIPLIER = 2.0
 
 HEALTH_PING_TIMEOUT_SECONDS = 2.0
+HISTORY_SAMPLE_CAP = 200
+"""Amostras de histórico mantidas por backend (Fase 8). Com o intervalo
+default do Health Monitor (5s), 200 amostras cobrem ~16-17 minutos — um
+recorte recente o bastante pra um gráfico útil sem crescer sem limite (é só
+memória, reinicia com o Gateway)."""
 """Timeout do ping do health check.  
   
 Um backend vivo responde "pong" bem abaixo do timeout de request normal —  
@@ -119,6 +125,13 @@ class BackendManager:
             name: asyncio.Lock() for name in self._states
         }
         self._restart_tasks: dict[str, asyncio.Task[None]] = {}
+        self._history: dict[str, deque[dict[str, Any]]] = {}
+        """Amostras de histórico por backend (Fase 8 — uptime/latência), uma
+        por ciclo do Health Monitor: ``{"timestamp", "status", "latency_ms"}``.
+        ``latency_ms`` é ``None`` quando não houve ping neste ciclo (backend
+        já estava offline/failed/disabled — só backends RUNNING são pingados,
+        ver ``_is_backend_alive``). Buffer circular por backend
+        (``HISTORY_SAMPLE_CAP``), só em memória — reinicia com o Gateway."""
 
     # ------------------------------------------------------------------
     # Consulta de estado
@@ -301,6 +314,7 @@ class BackendManager:
             await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
             del self._states[backend_name]
         del self._restart_locks[backend_name]
+        self._history.pop(backend_name, None)
         logger.info("backend_removed", backend=backend_name)
 
     async def stop_all(self) -> None:
@@ -350,19 +364,22 @@ class BackendManager:
             if not state.warn_disabled_logged:
                 logger.info("backend_disabled_ignorado_pelo_monitor", backend=backend_name)
                 state.warn_disabled_logged = True
+            self._record_history_sample(backend_name, state.status, None)
             return BackendStatus.DISABLED
 
         was_running = state.status is BackendStatus.RUNNING
-        if was_running and not await self._is_backend_alive(state):
-            logger.warning(
-                "backend_detected_offline",
-                backend=backend_name,
-                consecutive_failures=state.consecutive_failures + 1,
-            )
-            await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
-            state.consecutive_failures += 1
-        elif was_running:
-            if state.consecutive_failures > 0:
+        latency_ms: float | None = None
+        if was_running:
+            alive, latency_ms = await self._is_backend_alive(state)
+            if not alive:
+                logger.warning(
+                    "backend_detected_offline",
+                    backend=backend_name,
+                    consecutive_failures=state.consecutive_failures + 1,
+                )
+                await self._teardown_client(state, next_status=BackendStatus.OFFLINE)
+                state.consecutive_failures += 1
+            elif state.consecutive_failures > 0:
                 logger.info("backend_healthy_again", backend=backend_name)
                 state.consecutive_failures = 0
 
@@ -375,9 +392,33 @@ class BackendManager:
             if not state.terminal_logged:
                 self._log_terminal(state)
                 state.terminal_logged = True
+        self._record_history_sample(backend_name, state.status, latency_ms)
         return state.status
 
-    async def _is_backend_alive(self, state: BackendState) -> bool:
+    def _record_history_sample(
+        self, backend_name: str, status: "BackendStatus", latency_ms: float | None
+    ) -> None:
+        """Anexa uma amostra ao histórico do backend (Fase 8), uma por ciclo.
+
+        Cria o ``deque`` do backend na primeira amostra (``setdefault``) — não
+        precisa existir de antemão para todo backend em ``config.backends``,
+        cobre também um backend adicionado ao vivo via ``add_backend``.
+        """
+        history = self._history.setdefault(backend_name, deque(maxlen=HISTORY_SAMPLE_CAP))
+        history.append(
+            {"timestamp": time.time(), "status": status.value, "latency_ms": latency_ms}
+        )
+
+    def history_for(self, backend_name: str) -> list[dict[str, Any]]:
+        """Devolve uma cópia das amostras de histórico do backend (Fase 8).
+
+        Lista vazia se o backend nunca passou por um ciclo do Health Monitor
+        ainda (ex.: acabou de ser adicionado) — não é erro, é só "sem dado
+        ainda", e quem chama (a rota HTTP) trata os dois casos igual.
+        """
+        return list(self._history.get(backend_name, ()))
+
+    async def _is_backend_alive(self, state: BackendState) -> tuple[bool, float | None]:
         """Saúde = transporte vivo E respondendo ``ping``.
 
         A checagem é idêntica para os três transportes (stdio/http/sse): o
@@ -387,21 +428,27 @@ class BackendManager:
         ping (backend que não implementa o método) ainda prova que o peer está
         vivo e falando o protocolo — só falhas de transporte (timeout, conexão
         fechada) contam como offline.
+
+        Devolve ``(vivo, latência_ms)`` — ``latência_ms`` é ``None`` quando
+        não deu pra medir (client já morto antes de tentar o ping); nos outros
+        dois desfechos (ping respondeu, ping deu erro JSON-RPC) é o tempo
+        decorrido em milissegundos, usado pelo histórico de latência (Fase 8).
         """
         client = state.client
         if client is None or not client.is_alive():
-            return False
+            return False, None
+        started_at = time.monotonic()
         try:
             await asyncio.wait_for(
                 client.send_request("ping", {}), timeout=HEALTH_PING_TIMEOUT_SECONDS
             )
         except BackendJsonRpcError:
-            return True
+            return True, (time.monotonic() - started_at) * 1000
         except (BackendError, asyncio.TimeoutError):
             # BackendError inclui BackendTimeoutError; TimeoutError puro cobre o
             # wait_for estourando antes de o client converter a falha.
-            return False
-        return True
+            return False, None
+        return True, (time.monotonic() - started_at) * 1000
 
     def _schedule_restart(self, state: BackendState) -> None:
         """Agenda a tentativa de restart em task própria (uma por backend).
