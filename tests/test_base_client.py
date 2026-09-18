@@ -107,6 +107,28 @@ async def test_initialize_só_termina_apos_validacao_completa(result) -> None:
   
   
 @pytest.mark.asyncio  
+async def test_initialize_exige_igualdade_estrita_de_protocolo() -> None:  
+    """O handshake do cliente exige backend_protocol == PROTOCOL_VERSION.
+
+    Contrato registrado na limpeza (item 27): a checagem era um or triplo
+    cujo termo ``is_supported_protocol_version`` era logicamente morto (a
+    versão do Gateway sempre pertence ao conjunto suportado) — foi removido
+    sem mudança de comportamento. Relaxar a igualdade para aceitar qualquer
+    versão suportada é decisão de design da multi-versão (ver item 14 e a
+    docstring de PROTOCOL_VERSIONS), não limpeza.
+    """
+    client = DummyClient(initialize_result={"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {}}})
+    await client._initialize()
+    assert client.capabilities == {"tools": {}}
+
+    # Versão suportada no futuro hipotético mas != da falada pelo Gateway:
+    # rejeitada pela igualdade estrita, exatamente como qualquer não-string.
+    client = DummyClient(initialize_result={"protocolVersion": "errada", "capabilities": {}})
+    with pytest.raises(BackendError):
+        await client._initialize()
+  
+  
+@pytest.mark.asyncio  
 async def test_start_falhando_nao_fica_meio_de_pe() -> None:  
     """Start que falha na validação não deixa o client meio de pé; stop() após é seguro."""  
     client = DummyClient(initialize_result={"protocolVersion": "errada", "capabilities": {}})  

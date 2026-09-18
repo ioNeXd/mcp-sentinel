@@ -26,6 +26,7 @@ import asyncio
 import html
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -39,7 +40,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
-from gateway.config import DEFAULT_MAX_PAYLOAD_BYTES, BackendConfig, GatewayConfig
+from gateway.config import (
+    BACKEND_NAME_PATTERN,
+    DEFAULT_MAX_PAYLOAD_BYTES,
+    BackendConfig,
+    GatewayConfig,
+)
 from gateway.errors import (
     BackendError,
     BackendNotFoundError,
@@ -61,6 +67,15 @@ from gateway.sessions import SESSION_HEADER, normalize_session_id  # noqa: E402
 logger = structlog.get_logger(__name__)
 
 APP_VERSION = __version__
+
+_BACKEND_NAME_RE = re.compile(BACKEND_NAME_PATTERN)
+"""Regex compilado do padrão de nome de backend importado de ``gateway.config``
+— fonte única de verdade. A validação da rota e o schema Pydantic de
+``BackendConfig`` usam o MESMO padrão, então nunca divergem: um payload que
+passa na rota jamais é rejeitado (ou gravado quebrando o boot) pelo schema.
+Antes, a rota usava ``c.isalnum()``, que é Unicode-aware e aceitava acentos
+(``café``) que o schema rejeita — o config.json ficava com um backend
+inválido e o Gateway não subia no boot seguinte."""
 
 
 _DASHBOARD_STYLE = """  
@@ -498,12 +513,22 @@ def _render_dashboard(
 const GW_TOKEN = {token_js};  
 const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};  
   
+// Escapa texto vindo da API antes de entrar em HTML montado por string.
+// O schema NÃO restringe command/url/args (só o name é ASCII), então um
+// config.json importado pode carregar metacaracteres de HTML nesses campos —
+// sem escape, o refresh dos cards despejaria tudo cru no innerHTML
+// (DOM XSS acionável por quem influencia o config: arquivo editado à mão,
+// importação do Claude Desktop, restore de backup).
+function escapeHtml(v) {{  
+  return String(v).replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));  
+}}  
+  
 function fmtMeta(s) {{  
   const bits = [];  
   if (s.type) bits.push(s.type);  
   if (s.url) bits.push(s.url);  
   if (s.command) bits.push((s.command + " " + (s.args || []).join(" ")).trim());  
-  return bits.join(" · ");  
+  return escapeHtml(bits.join(" · "));  
 }}  
   
 // last_restart_at do servidor é um timestamp MONOTÔNICO (não é hora real) —  
@@ -511,6 +536,7 @@ function fmtMeta(s) {{
 // real local) vimos esse valor mudar pela primeira vez, e humanizamos a  
 // partir daí. Funciona enquanto o dashboard ficou aberto desde o restart;  
 // se a página abriu depois, mostra "recente" na primeira vez que aparece.  
+// Chaves obsoletas são podadas a cada refresh (pruneRestartSeenAt).  
 const restartSeenAt = {{}};  
 function humanizeRestart(name, lastRestartAt) {{  
   if (lastRestartAt === null || lastRestartAt === undefined) return null;  
@@ -524,6 +550,21 @@ function humanizeRestart(name, lastRestartAt) {{
   if (m < 60) return `há ${{m}}min`;  
   const h = Math.floor(m / 60);  
   return `há ${{h}}h`;  
+}}  
+  
+// Poda do restartSeenAt: só a entrada do timestamp ATUAL de cada backend
+// interessa. Quando um backend troca de timestamp (restart novo) ou some da
+// resposta (removido), as chaves antigas viram lixo inacessível — sem esta
+// poda, o dicionário cresceria sem limite numa aba aberta por muito tempo
+// com muitos restarts.
+function pruneRestartSeenAt(servers) {{  
+  const live = new Set();  
+  for (const s of servers) {{  
+    if (s.last_restart_at !== null && s.last_restart_at !== undefined) live.add(s.name + ":" + s.last_restart_at);  
+  }}  
+  for (const key of Object.keys(restartSeenAt)) {{  
+    if (!live.has(key)) delete restartSeenAt[key];  
+  }}  
 }}  
   
 // ---- Favoritos/fixados (localStorage) ----
@@ -545,12 +586,12 @@ function renderCard(s, opts) {{
   const restartLabel = humanizeRestart(s.name, s.last_restart_at);
   const pinned = pinnedSet.has(s.name);
   return `
-    <div class="card" data-name="${{s.name}}">
-      <button class="card-remove" data-remove="${{s.name}}" title="Remover este MCP">&times;</button>
+    <div class="card" data-name="${{escapeHtml(s.name)}}">
+      <button class="card-remove" data-remove="${{escapeHtml(s.name)}}" title="Remover este MCP">&times;</button>
       <div class="card-head">
-        <button class="pin-btn${{pinned ? " pinned" : ""}}" data-pin="${{s.name}}" title="${{pinned ? "Desafixar" : "Fixar no topo"}}">${{pinned ? "★" : "☆"}}</button>
-        <span class="name">${{s.name}}</span>
-        <span class="badge badge-${{st}}">${{st}}</span>
+        <button class="pin-btn${{pinned ? " pinned" : ""}}" data-pin="${{escapeHtml(s.name)}}" title="${{pinned ? "Desafixar" : "Fixar no topo"}}">${{pinned ? "★" : "☆"}}</button>
+        <span class="name">${{escapeHtml(s.name)}}</span>
+        <span class="badge badge-${{escapeHtml(st)}}">${{escapeHtml(st)}}</span>
       </div>
       <div class="meta">${{fmtMeta(s)}}</div>
       <div class="counts">
@@ -559,7 +600,7 @@ function renderCard(s, opts) {{
         <span>Prompts: <b>${{s.prompts_count ?? 0}}</b></span>
         <span>Falhas: <b>${{s.consecutive_failures ?? 0}}</b></span>
       </div>
-      ${{restartLabel ? `<div class="meta">Último restart: ${{restartLabel}}</div>` : ""}}
+      ${{restartLabel ? `<div class="meta">Último restart: ${{escapeHtml(restartLabel)}}</div>` : ""}}
       <div class="actions">
         <button class="act" data-action="restart" ${{disabled ? "disabled" : ""}}>Restart</button>
         <button class="act" data-action="disable" ${{canDisable ? "" : "disabled"}}>Disable</button>
@@ -579,6 +620,7 @@ let lastServers = [];
 
 function renderGrid(servers) {{
   lastServers = servers;
+  pruneRestartSeenAt(servers);
   const grid = document.getElementById("backends-grid");
   if (!servers.length) {{ grid.innerHTML = '<div class="empty">Nenhum backend configurado.</div>'; return; }}
   let html = "";
@@ -645,7 +687,8 @@ async function refresh() {{
       const h = await healthRes.json();  
       const pill = document.getElementById("status-pill");  
       pill.className = "pill pill-" + h.status;  
-      pill.innerHTML = '<span class="dot"></span>' + h.status;  
+      pill.innerHTML = '<span class="dot"></span>';  
+      pill.appendChild(document.createTextNode(h.status));  
       document.getElementById("totals-stat").textContent =  
         `Tools: ${{h.tools_count}} · Resources: ${{h.resources_count}} · Prompts: ${{h.prompts_count}}`;  
     }}  
@@ -1213,9 +1256,17 @@ form.addEventListener("submit", async (ev) => {{
 def _render_backend_cards(servers: list[dict[str, Any]]) -> str:
     """Renderiza os cards iniciais (server-rendered) dos backends.
 
-    Produz o mesmo shape que ``renderCard`` gera no JS, para o primeiro paint
-    não ficar em branco antes do primeiro ``refresh``. Todo valor dinâmico
-    passa por ``html.escape``.
+    Primeiro paint com a MESMA estrutura visual dos cards do ``renderCard``
+    (JS) — ``data-name``, badge, meta, contagens e botões restart/disable/
+    enable funcionais via delegador de cliques — para a tela não ficar em
+    branco antes do primeiro ``refresh``. É porém uma versão REDUZIDA: sem
+    ``card-remove`` nem ``pin-btn``. O de fixar não pode ser emitido pelo
+    servidor porque o estado dos fixados vive no localStorage do navegador
+    (``pinnedSet`` é client-side por design — emitir um default ☆ fixaria
+    errado e um clique desafixaria por engano); os dois botões aparecem no
+    primeiro ``refresh`` (até ~3s), quando o ``renderGrid`` substitui estes
+    cards pelo render completo do JS. Todo valor dinâmico passa por
+    ``html.escape``.
     """
     if not servers:
         return '<div class="empty">Nenhum backend configurado.</div>'
@@ -1504,7 +1555,9 @@ def _validate_new_backend_payload(payload: Any) -> str | None:
     Espelha as regras que ``BackendConfig`` exige: ``stdio`` precisa de
     ``command`` (e ``args`` opcional como lista de strings); ``http``/``sse``
     precisam de ``url`` começando com ``http://`` ou ``https://``. O ``name``
-    é obrigatório e restrito a letras, números, ``-`` e ``_``.
+    é obrigatório e validado contra o MESMO padrão ASCII do schema
+    (``BACKEND_NAME_PATTERN`` — ver ``_BACKEND_NAME_RE``): letras, números,
+    ``-`` e ``_``, sem acentos nem ``.``.
 
     Returns:
         A mensagem de erro (string) do primeiro problema encontrado, ou
@@ -1515,8 +1568,8 @@ def _validate_new_backend_payload(payload: Any) -> str | None:
     name = payload.get("name")
     if not isinstance(name, str) or not name.strip():
         return "campo 'name' é obrigatório"
-    if not all(c.isalnum() or c in "-_" for c in name.strip()):
-        return "'name' só pode ter letras, números, '-' e '_'"
+    if _BACKEND_NAME_RE.match(name.strip()) is None:
+        return "'name' só pode ter letras ASCII, números, '-' e '_'"
     btype = payload.get("type", "stdio")
     if btype not in ("stdio", "http", "sse"):
         return "'type' deve ser 'stdio', 'http' ou 'sse'"
@@ -1538,20 +1591,59 @@ def _build_backend_entry(payload: dict[str, Any]) -> dict[str, Any]:
     """Monta a entrada a ser gravada em ``config.json`` a partir do payload
     já validado.
 
-    Produz o mesmo shape das entradas existentes: backends ``stdio`` NÃO
-    carregam a chave ``type`` (igual ao ``backend-a`` do config original) e
-    ``args`` só é incluído quando há argumentos não vazios; ``http``/``sse``
-    carregam ``type`` e ``url``.
+    Shape PADRONIZADO entre os escritores de config: backends ``stdio``
+    carregam ``type: "stdio"`` EXPLÍCITO — igual ao que o importador do
+    Claude Desktop emite (``convert_entry``) — para o mesmo arquivo não ficar
+    heterogêneo conforme o caminho que criou cada entrada. Antes, esta rota
+    omitia a chave (espelhando o ``backend-a`` do config original); o schema
+    aceita as duas formas (default ``stdio``, ver ``BackendConfig.type``),
+    então a mudança é cosmética. ``args`` segue só presente quando há
+    argumentos; ``http``/``sse`` carregam ``type`` + ``url``.
     """
     name = payload["name"].strip()
     btype = payload.get("type", "stdio")
     if btype == "stdio":
-        entry: dict[str, Any] = {"name": name, "command": payload["command"].strip()}
+        entry: dict[str, Any] = {
+            "name": name,
+            "type": "stdio",
+            "command": payload["command"].strip(),
+        }
         args = [a for a in (payload.get("args") or []) if a]
         if args:
             entry["args"] = args
         return entry
     return {"name": name, "type": btype, "url": payload["url"].strip()}
+
+
+def _dashboard_browser_url(auth_token: str | None) -> str:
+    """URL que o auto-open do dashboard abre no navegador.
+
+    O host deriva de ``MCP_GATEWAY_HOST`` — o MESMO valor (e a MESMA
+    normalização: strip, fallback) que o ``main.py`` usa para o bind — então
+    o navegador abre o endereço em que o Gateway realmente escuta (antes, a
+    URL era fixa em 127.0.0.1 e ignorava o host configurado). Duas exceções
+    deliberadas:
+
+    - ``0.0.0.0`` (bind "todas as interfaces") não é endereço navegável —
+      navegadores abrem ``127.0.0.1`` no lugar; mapear para o loopback é
+      exatamente o que ``0.0.0.0`` significa para um cliente na própria
+      máquina, então o auto-open continua funcionando nesse cenário;
+    - hosts IPv6 ganham colchetes (``http://[::1]:porta/``), sem os quais a
+      URL ficaria malformada.
+
+    Sem env, ``main.py`` faz bind em 127.0.0.1 e a URL bate por definição —
+    o comportamento do uso local não muda.
+    """
+    host = os.environ.get("MCP_GATEWAY_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    if host == "0.0.0.0":
+        host = "127.0.0.1"
+    elif ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = os.environ.get("MCP_GATEWAY_PORT", "8080")
+    url = f"http://{host}:{port}/"
+    if auth_token:
+        url += f"?token={auth_token}"
+    return url
 
 
 def create_app(  
@@ -1581,8 +1673,8 @@ def create_app(
         """Abre o dashboard no navegador, salvo em modo headless.  
   
         Controlado por env var: ``MCP_GATEWAY_OPEN_BROWSER=false`` desliga;  
-        ``MCP_GATEWAY_PORT`` informa a porta real do uvicorn (default 8080),  
-        já que este módulo não sabe em que porta foi montado.  
+        porta e host vêm de ``MCP_GATEWAY_PORT``/``MCP_GATEWAY_HOST`` — as  
+        mesmas env vars do bind do uvicorn (ver ``_dashboard_browser_url``).  
         """  
         if os.environ.get("MCP_GATEWAY_OPEN_BROWSER", "true").strip().lower() in (  
             "0",  
@@ -1590,10 +1682,7 @@ def create_app(
             "no",  
         ):  
             return  
-        port = os.environ.get("MCP_GATEWAY_PORT", "8080")  
-        url = f"http://127.0.0.1:{port}/"  
-        if auth_token:  
-            url += f"?token={auth_token}"  
+        url = _dashboard_browser_url(auth_token)  
   
         def _open() -> None:  
             time.sleep(0.6)  # dá tempo do uvicorn começar a aceitar conexões  
@@ -1862,10 +1951,39 @@ def create_app(
         próximo restart do Gateway. Não usa ``_control_route`` porque aquele
         helper assume que o backend AINDA existe em ``_states`` depois da
         operação (verdade para disable/enable/restart, falso aqui).
+
+        Recusa remover o ÚLTIMO backend (409): a ``GatewayConfig`` exige ao
+        menos um backend no boot, então gravar uma lista vazia deixaria o
+        config.json num estado que o Gateway não sobe — a remoção é bloqueada
+        antes de qualquer efeito (memória ou disco).
         """
         if not _is_authorized(request):
             logger.info("http_auth_rejected", route=f"/api/servers/{name}")
             return _unauthorized()
+        # Guarda ANTES de qualquer efeito (memória ou disco): a GatewayConfig
+        # EXIGE ao menos um backend (model_validator). Remover o último
+        # deixaria o config.json num estado que o boot seguinte rejeita — e,
+        # sem hot-reload, o operador teria que editar o JSON à mão para
+        # recuperar. O critério é o DISCO (fonte do boot); se ele estiver
+        # ilegível, a guarda não bloqueia — o fluxo antigo (remoção + aviso
+        # de escrita falha) preserva o caminho de recuperação pelo painel.
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_disk = json.load(f)
+            disk_backends = raw_disk.get("backends", []) if isinstance(raw_disk, dict) else []
+            if len(disk_backends) == 1 and disk_backends[0].get("name") == name:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": (
+                            f"'{name}' é o último backend — o Gateway exige ao "
+                            "menos um. Adicione outro antes de remover este."
+                        )
+                    },
+                )
+        except (OSError, json.JSONDecodeError):
+            pass
         try:
             await mcp_server.backend_manager.remove_backend(name)
         except BackendError as exc:
@@ -1873,8 +1991,6 @@ def create_app(
         except Exception as exc:
             logger.exception("erro inesperado removendo backend", backend=name, error=str(exc))
             return JSONResponse(status_code=500, content={"detail": "Internal error"})
-
-        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 raw_config = json.load(f)
@@ -2097,6 +2213,13 @@ def create_app(
         Não sobe nada em tempo real (diferente do "Adicionar MCP") — são
         potencialmente vários backends de uma vez, então a aplicação fica
         pra um restart do Gateway, com o operador revisando os avisos antes.
+
+        MESMO portão do restore/settings: o resultado mesclado passa por
+        ``GatewayConfig.model_validate`` ANTES de tocar o disco — ``import_config``
+        não valida contra o schema (ex.: ``url`` sem host, ``headers`` não-string
+        passam direto pelo ``convert_entry``), então sem isso uma entrada
+        importada podia envenenar o config.json e quebrar o boot seguinte.
+        Bloqueio = 422 e nada gravado.
         """
         if not _is_authorized(request):
             logger.info("http_auth_rejected", route="/api/import/claude-desktop")
@@ -2168,6 +2291,23 @@ def create_app(
             added.append(backend["name"])
 
         if added:
+            # MESMO portão do restore/settings: o resultado mesclado tem que
+            # passar pelo MESMO schema que o load_config exige no boot, ANTES
+            # de gravar — sem isso, entrada importada que o convert_entry não
+            # consegue checar (url sem host, headers não-string...) iria para
+            # o config.json real e quebraria o próximo boot.
+            try:
+                GatewayConfig.model_validate(raw_config)
+            except ValidationError as exc:
+                return JSONResponse(
+                    status_code=422,
+                    content={
+                        "detail": (
+                            "importação bloqueada: o config resultante não passa no "
+                            f"schema do boot, nada foi gravado: {exc}"
+                        )
+                    },
+                )
             tmp_path = f"{config_path}.tmp"
             try:
                 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -2209,6 +2349,17 @@ def create_app(
         comando/URL não responde agora), o backend fica registrado como
         ``offline`` e o HealthMonitor assume o restart sozinho — o passo 1
         (gravação em disco) nunca é desfeito por uma falha no passo 2.
+
+        Antes de qualquer efeito (disco ou memória), a entrada montada é
+        validada contra o PRÓPRIO ``BackendConfig`` — o mesmo schema que o
+        boot usa é a fonte única de verdade (a checagem leve do payload só
+        produz mensagens amigáveis, não decide). Sem isso, uma entrada que o
+        schema rejeita podia ser gravada no ``config.json`` e quebrar o boot
+        seguinte — divergência de validação entre rota e schema, a mesma raiz
+        dos achados de nome (regex ASCII vs. ``c.isalnum()``), só que em
+        outros campos: ex.: ``url="http://"`` (sem host) passava na checagem
+        leve por ``startswith`` e era rejeitada pelo schema, que exige
+        scheme E host.
 
         O arquivo de config é resolvido pela MESMA env var e default do
         ``main.py`` (``MCP_GATEWAY_CONFIG`` -> ``config/config.json``), pra o
@@ -2254,6 +2405,16 @@ def create_app(
             )
 
         entry = _build_backend_entry(payload)
+        try:
+            backend_config = BackendConfig(**entry)
+        except ValidationError as exc:
+            # Fonte única de verdade: o MESMO schema que o load_config usa no
+            # boot decide aqui, ANTES da gravação — nenhum caminho desta rota
+            # deixa no config.json uma entrada que o próximo boot rejeitaria.
+            return JSONResponse(
+                status_code=422,
+                content={"detail": f"entrada rejeitada pelo schema do config: {exc}"},
+            )
         backends.append(entry)
 
         tmp_path = f"{config_path}.tmp"
@@ -2273,7 +2434,8 @@ def create_app(
 
         live_note = ""
         try:
-            backend_config = BackendConfig(**entry)
+            # backend_config já nasceu validado contra o schema (antes da
+            # gravação em disco) — aqui é só o start ao vivo.
             await mcp_server.backend_manager.add_backend(backend_config)
             live_status = mcp_server.backend_manager.status_of(name).value
             live_note = (

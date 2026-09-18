@@ -282,6 +282,9 @@ python scripts/import_claude_desktop_config.py --prefix claude # evita colisão 
 - Entradas `command`/`args` viram `type: "stdio"`; entradas remotas  
   (`url` + `type`) são convertidas diretamente.  
 - Nomes são sanitizados (espaços/pontos viram `-`, com aviso).  
+- `--prefix NOME` compõe `NOME-<servidor>` (separador `-`, nunca `.` — o  
+  nome de backend não pode conter ponto, pois é o delimitador do namespace  
+  `backend.<id>`); o prefixo é sanitizado como qualquer nome.  
 - **Não convertido automaticamente** (sempre com aviso, nunca em silêncio):  
   pontes (`mcp-remote`, `supergateway`, `mcp-proxy`…), entradas com `url` sem  
   `type`, entradas sem `command`/`url`, e o campo `env` (não suportado).  
@@ -303,8 +306,9 @@ Além do `POST /mcp`, o Gateway expõe rotas de observabilidade e controle.
 - `GET /api/servers` — detalhe operacional de cada backend (tipo, comando/url,  
   status, falhas, último restart). **Mesma auth do `POST /mcp`.**  
 - `GET /api/tools/size` — diagnóstico do tamanho do `tools/list` (chars/tokens  
-  aproximados, quebra por backend). Aceita `Mcp-Session-Id` para medir uma  
-  sessão filtrada.  
+  aproximados, quebra por backend — a tool nativa `gateway.diagnose`, sempre  
+  presente no `tools/list`, aparece como própria chave). Aceita  
+  `Mcp-Session-Id` para medir uma sessão filtrada.  
   
 **Controle** (mesma auth do `/mcp` — alteram estado, nunca abertas):  
   

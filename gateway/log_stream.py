@@ -6,29 +6,18 @@ replicado a todo cliente SSE conectado em ``GET /api/logs/stream``
 (``gateway/http_server.py``). Não é um sistema de log persistente — guarda
 só um pequeno buffer circular de replay para quem acabou de conectar.
 
-Integração necessária em ``gateway/logging.py`` (não incluído aqui: este
-projeto não tinha esse arquivo nos uploads revisados) — adicionar
-``broadcast_processor`` à cadeia de ``processors=[...]`` do
-``structlog.configure(...)``, ANTES do renderer final
-(JSONRenderer/ConsoleRenderer), porque ele precisa do ``event_dict`` ainda
-como dict:
-
-    from gateway.log_stream import broadcast_processor
-    structlog.configure(
-        processors=[
-            ...,  # processors existentes (timestamper, etc.)
-            broadcast_processor,   # <- adicionar aqui
-            structlog.processors.JSONRenderer(),  # ou o renderer atual
-        ],
-        ...,
-    )
+Integração (JÁ FEITA em ``gateway/logging.py``): ``broadcast_processor`` entra
+na cadeia de ``processors=[...]`` do ``structlog.configure(...)``, ANTES do
+renderer final (JSONRenderer/ConsoleRenderer), porque ele precisa do
+``event_dict`` ainda como dict — qualquer nova configuração de logging do
+Gateway deve preservar essa ordem.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import time
+from collections.abc import MutableMapping
 from collections import deque
 from typing import Any
 
@@ -100,17 +89,49 @@ def _offer(queue: "asyncio.Queue[str]", line: str) -> None:
         pass
 
 
+_MAX_JSON_SAFE_DEPTH = 5
+"""Teto de profundidade da conversão recursiva de ``_json_safe``: contexto de
+log que passar disso vira ``str()``. Protege o broadcaster de referências
+circulares (dict que contém a si mesmo) e de estruturas patológicas — um log
+quebrado não pode derrubar o logging (ver ``LogBroadcaster.publish``)."""
+
+
+def _json_safe_value(value: Any, depth: int = 0) -> Any:
+    """Converte um valor para algo serializável em JSON, recursivamente.
+
+    Primitivos passam direto; dict/list/tuple/set são percorridos (dict/list
+    chegam ao ``JSON.parse`` do console ao vivo como objeto/array navegável,
+    não como a repr Python em string); chaves de dict viram ``str`` (exigência
+    do JSON); folhas exóticas (datetime etc.) e o além do teto de profundidade
+    caem no ``str(value)``.
+    """
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if depth >= _MAX_JSON_SAFE_DEPTH:
+        return str(value)
+    if isinstance(value, dict):
+        return {str(k): _json_safe_value(v, depth + 1) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe_value(item, depth + 1) for item in value]
+    return str(value)
+
+
 def _json_safe(event_dict: dict[str, Any]) -> dict[str, Any]:
-    """Normaliza campos que o ``json`` padrão não serializa direto."""
-    safe: dict[str, Any] = {}
-    for key, value in event_dict.items():
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            safe[key] = value
-        else:
-            safe[key] = str(value)
-    safe.setdefault("timestamp", time.time())
-    safe.setdefault("level", safe.get("level", "info"))
-    return safe
+    """Normaliza os campos de um evento de log para serialização JSON.
+
+    A conversão é RECURSIVA (ver ``_json_safe_value``): contexto estruturado
+    aninhado — ex.: ``per_backend_chars`` do diagnóstico de tools — chega ao
+    console ao vivo como objeto JSON, e não como string de repr Python.
+
+    SEM defaults de ``timestamp``/``level``: na cadeia real (ver
+    ``gateway/logging.py``) este módulo roda DEPOIS de ``add_log_level`` e do
+    ``TimeStamper(fmt="iso")``, então os dois campos já chegam preenchidos —
+    ``level`` como string, ``timestamp`` como ISO-8601 string (não epoch; o
+    ``fmtTs`` do dashboard trata o ISO direto). Os ``setdefault`` antigos
+    eram inalcançáveis pelo único produtor (``broadcast_processor``) e o
+    default epoch era enganoso sobre o formato real do campo.
+    """
+    return {str(k): _json_safe_value(v) for k, v in event_dict.items()}
 
 
 # Instância única do processo — importada tanto pelo hookup de logging
@@ -118,12 +139,19 @@ def _json_safe(event_dict: dict[str, Any]) -> dict[str, Any]:
 log_broadcaster = LogBroadcaster()
 
 
-def broadcast_processor(logger: Any, method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+def broadcast_processor(
+    logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """Processor do structlog: publica uma cópia do evento e deixa passar.
 
     Retorna ``event_dict`` inalterado — é um processor "pass-through", só
     espiona o evento pra replicar no console; não interfere no pipeline de
     log normal (arquivo/stdout continuam funcionando exatamente como antes).
+
+    Assinatura segue o protocolo ``structlog.typing.Processor``
+    (``MutableMapping`` de entrada/saída) — anotar ``dict`` rejeita o
+    processor na lista de ``structlog.configure`` (dict é mais estreito que
+    ``MutableMapping`` e parâmetros exigem contravariância).
     """
     log_broadcaster.publish(dict(event_dict))
     return event_dict

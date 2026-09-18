@@ -11,7 +11,7 @@ sempre enxergam um snapshot consistente, sem locks e sem itens órfãos/obsoleto
 
 import asyncio
 import time
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -35,16 +35,17 @@ MAX_BACKOFF_SECONDS = 30.0
 BACKOFF_MULTIPLIER = 2.0
 
 HEALTH_PING_TIMEOUT_SECONDS = 2.0
+"""Timeout do ping do health check.
+
+Um backend vivo responde "pong" bem abaixo do timeout de request normal —
+esperar o timeout longo apenas atrasaria a detecção de queda sem ganho algum.
+"""
+
 HISTORY_SAMPLE_CAP = 200
 """Amostras de histórico mantidas por backend (Fase 8). Com o intervalo
 default do Health Monitor (5s), 200 amostras cobrem ~16-17 minutos — um
 recorte recente o bastante pra um gráfico útil sem crescer sem limite (é só
 memória, reinicia com o Gateway)."""
-"""Timeout do ping do health check.  
-  
-Um backend vivo responde "pong" bem abaixo do timeout de request normal —  
-esperar o timeout longo apenas atrasaria a detecção de queda sem ganho algum.  
-"""
 
 
 class BackendStatus(str, Enum):
@@ -190,13 +191,20 @@ class BackendManager:
         }
 
     def server_details(self) -> list[dict[str, Any]]:
-        """Detalhe de cada backend para GET /api/servers."""
+        """Detalhe de cada backend para GET /api/servers.
+
+        As contagens por backend vêm de um Counter por registry (uma única
+        passada por listagem) — varrer as três listas inteiras DE NOVO para
+        cada backend era O(backends × itens), redundante para o que é só um
+        sumário de contagens. ``Counter`` devolve 0 para backend sem itens
+        (mesmo shape que ``sum(...)`` produzia, incluindo o zero).
+        """
         tools, resources, prompts = self.registries
+        tools_by_backend = Counter(e.backend for e in tools.list_all())
+        resources_by_backend = Counter(e.backend for e in resources.list_all())
+        prompts_by_backend = Counter(e.backend for e in prompts.list_all())
         details: list[dict[str, Any]] = []
         for state in self._states.values():
-            tools_count = sum(1 for e in tools.list_all() if e.backend == state.name)
-            resources_count = sum(1 for e in resources.list_all() if e.backend == state.name)
-            prompts_count = sum(1 for e in prompts.list_all() if e.backend == state.name)
             backend_config: BackendConfig = state.config
             details.append(
                 {
@@ -209,9 +217,9 @@ class BackendManager:
                     "consecutive_failures": state.consecutive_failures,
                     "last_restart_at": state.last_restart_at,
                     "connected_since": state.connected_since,
-                    "tools_count": tools_count,
-                    "resources_count": resources_count,
-                    "prompts_count": prompts_count,
+                    "tools_count": tools_by_backend[state.name],
+                    "resources_count": resources_by_backend[state.name],
+                    "prompts_count": prompts_by_backend[state.name],
                     "transport": type(state.client).__name__ if state.client else None,
                 }
             )

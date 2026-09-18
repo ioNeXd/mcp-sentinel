@@ -421,13 +421,14 @@ async def test_start_all_com_os_tres_tipos_agrega_e_roteia(
         )  
         assert response is not None and response.get("error") is None  
         names = {tool["name"] for tool in response["result"]["tools"]}  
-        assert names == {  
-            "local.echo",  
-            "local.add",  
-            "remoto.echo",  
-            "remoto.add",  
-            "eventos.echo",  
-            "eventos.add",  
+        assert names == {
+            "local.echo",
+            "local.add",
+            "remoto.echo",
+            "remoto.add",
+            "eventos.echo",
+            "eventos.add",
+            "gateway.diagnose",  # tool nativa do Gateway, sempre injetada
         }  
   
         # tools/call roteia para o backend certo (texto devolvido por cada um).  

@@ -559,3 +559,42 @@ async def test_notificacao_com_erro_http_é_logada(sse_backend: str) -> None:
     finally:  
         await client.stop()  
         _stop_inprocess_sse_server(server, thread)
+
+
+@pytest.mark.asyncio
+async def test_resolve_por_deadline_nao_redespacha_buffer_parcial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regressão do double-dispatch em ``_consume`` (Fase 3).
+
+    Quando o ``ENDPOINT_WAIT_SECONDS`` estoura com um evento INCOMPLETO no
+    buffer, ``resolve_first_event`` despacha o parcial (nome != 'endpoint'),
+    mas antes não limpava ``data_lines``/``event_name`` — a linha em branco
+    seguinte despachava o MESMO evento de novo. Basta um keep-alive com
+    ``data:`` que chegue antes do primeiro evento completo (raro, mas lógica
+    incorreta: uma resposta pode ser aplicada duas vezes).
+    """
+    monkeypatch.setattr(sse_client_module, "ENDPOINT_WAIT_SECONDS", 0.05)
+    client = SseClient(
+        BackendConfig(name="sse-x", type="sse", url="http://127.0.0.1:1"),
+        request_timeout=5.0,
+    )
+    dispatches: list[tuple[str, str | None]] = []
+    original = client._dispatch_event  # noqa: SLF001
+
+    def spy(data: str, name: str | None = None) -> None:
+        dispatches.append((data, name))
+        original(data, name)
+
+    client._dispatch_event = spy  # type: ignore[method-assign]
+
+    async def lines() -> AsyncIterator[str]:
+        yield 'data: {"jsonrpc":"2.0","id":7,"result":{"ok":true}}'
+        await asyncio.sleep(0.2)  # estoura o deadline com buffer parcial
+        yield ""  # linha em branco seguinte (aqui estaria o double-dispatch)
+        yield 'data: {"jsonrpc":"2.0","id":8,"result":{"ok":true}}'
+        yield ""
+
+    await client._consume(lines())  # noqa: SLF001
+    ids = [d[0].split('"id":')[1].split(",")[0] for d in dispatches]
+    assert ids == ["7", "8"], f"cada evento uma única vez; obtido: {ids}"

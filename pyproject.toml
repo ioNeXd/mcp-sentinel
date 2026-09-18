@@ -17,7 +17,11 @@ ignore = ["E501"]
   
 [tool.mypy]  
 python_version = "3.10"  
-files = ["gateway"]  
+# Escopo completo do código do Gateway: main.py (ponto de entrada) e scripts/
+# (importador do Claude Desktop — superfície de regressão real, ver achados
+# 1/10/25) precisam do mesmo type-checking que gateway/. scripts/ é pacote
+# (__init__.py) para o mypy resolver um único nome de módulo pro importador.
+files = ["gateway", "main.py", "scripts"]  
 ignore_missing_imports = true  
   
 # O mesmo timeout vale localmente (não só no CI). Sem timeout_method: o método  

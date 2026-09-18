@@ -397,7 +397,19 @@ class McpServer:
     def _handle_get_active_backends(
         self, request: JsonRpcRequest, session_id: str | None
     ) -> dict[str, Any]:
-        """Extensão: lista os backends ativos da sessão (``null`` = sem filtro)."""
+        """Extensão: lista os backends ativos da sessão (``null`` = sem filtro).
+
+        Exige o header de sessão como o ``set``: a resposta descreve UMA sessão
+        específica, então sem identidade a resposta seria ambígua. Sem header é
+        ``-32600`` (Invalid Request) — mesmo tratamento do ``set``, como o README
+        já documentava: "Método de sessão sem o header → -32600".
+        """
+        if session_id is None:
+            return make_error(
+                request.id,
+                INVALID_REQUEST,
+                f"Invalid Request: extensão de sessão exige o header {SESSION_HEADER}",
+            )
         active = self.sessions.active_backends(session_id)
         return make_result(
             request.id,
@@ -410,9 +422,21 @@ class McpServer:
     def _handle_clear_active_backends(
         self, request: JsonRpcRequest, session_id: str | None
     ) -> dict[str, Any]:
-        """Extensão: remove o filtro — a sessão volta a ver todos os backends."""
-        if session_id is not None:
-            self.sessions.clear(session_id)
+        """Extensão: remove o filtro — a sessão volta a ver todos os backends.
+
+        Exige o header de sessão como o ``set``: sem identidade, "limpar" não
+        tem alvo — antes respondia sucesso como no-op silencioso, sem sinal de
+        que a operação foi inócua. Sem header é ``-32600`` (Invalid Request),
+        mesmo tratamento do ``set``, como o README já documentava: "Método de
+        sessão sem o header → -32600".
+        """
+        if session_id is None:
+            return make_error(
+                request.id,
+                INVALID_REQUEST,
+                f"Invalid Request: extensão de sessão exige o header {SESSION_HEADER}",
+            )
+        self.sessions.clear(session_id)
         return make_result(request.id, {"active_backends": None, "filtered": False})
 
     # ------------------------------------------------------------------
@@ -505,9 +529,7 @@ class McpServer:
         result = await self._call_backend(request.id, entry, "resources/read", call_params)
         if result.get("error") is None and isinstance(result.get("result"), dict):
             result = dict(result)
-            result["result"] = self._namespace_content_uris(
-                result["result"], entry.backend, entry.name
-            )
+            result["result"] = self._namespace_content_uris(result["result"], entry.backend)
         return result
 
     async def _handle_prompt_get(
@@ -623,20 +645,47 @@ class McpServer:
         aproximados (chars/4, heurística grosseira — não é tokenizer real).
         Serve para decidir na prática se o filtro seletivo vale a pena para um
         config específico (ver GET /api/tools/size no README).
+
+        O pareamento entry↔payload acontece no momento da construção — payload
+        omitido (metadata inválida, ver ``_tool_payload``) nunca desalinha o
+        ``per_backend_chars``: antes, o ``zip`` por posição atribuía o payload
+        de um backend ao entry do anterior e deixava as últimas entries fora
+        da contagem.
+
+        Espelha o ``tools/list`` REAL: a tool nativa ``gateway.diagnose`` é
+        injetada antes do registry em toda resposta (ver
+        ``DIAGNOSTIC_TOOL_PAYLOAD`` — não é tool de nenhum backend), então ela
+        entra aqui na contagem e nos chars, listada em ``per_backend_chars``
+        sob a própria chave ``gateway.diagnose``. Sem isso, a estimativa —
+        cujo propósito é decidir se o filtro seletivo compensa — subestimava
+        em exatamente a payload presente em 100% das respostas.
         """
         entries = self._visible(self._tools.list_all(), session_id)
-        payloads = [
-            payload for entry in entries if (payload := self._tool_payload(entry)) is not None
+        pairs = [
+            (entry, payload)
+            for entry in entries
+            if (payload := self._tool_payload(entry)) is not None
         ]
-        serialized = json.dumps({"tools": payloads}, ensure_ascii=False)
-        per_backend: dict[str, int] = {}
-        for entry, payload in zip(entries, payloads):
+        # A tool nativa de diagnóstico nunca vem de list_all(): o tools/list
+        # a injeta ANTES do registry (não é de nenhum backend). Incluí-la aqui
+        # espelha a resposta real — a chave em per_backend usa o próprio nome
+        # da tool, separada de qualquer backend.
+        per_backend: dict[str, int] = {
+            DIAGNOSTIC_TOOL_NAME: len(
+                json.dumps(DIAGNOSTIC_TOOL_PAYLOAD, ensure_ascii=False)
+            )
+        }
+        for entry, payload in pairs:
             per_backend[entry.backend] = per_backend.get(entry.backend, 0) + len(
                 json.dumps(payload, ensure_ascii=False)
             )
+        serialized = json.dumps(
+            {"tools": [DIAGNOSTIC_TOOL_PAYLOAD, *(payload for _, payload in pairs)]},
+            ensure_ascii=False,
+        )
         filtered = self.sessions.active_backends(session_id) is not None
         return {
-            "tools_count": len(entries),
+            "tools_count": 1 + len(entries),
             "json_chars": len(serialized),
             "approx_tokens": len(serialized) // APPROX_CHARS_PER_TOKEN,
             "per_backend_chars": dict(sorted(per_backend.items())),
@@ -717,20 +766,29 @@ class McpServer:
         return payload
 
     @staticmethod
-    def _namespace_content_uris(
-        result: dict[str, Any], backend: str, original_uri: str
-    ) -> dict[str, Any]:
-        """Reescreve a ``uri`` original dos ``contents`` para o formato namespaced.
+    def _namespace_content_uris(result: dict[str, Any], backend: str) -> dict[str, Any]:
+        """Reescreve a ``uri`` de TODO item dos ``contents`` para o namespaced.
 
         Mantém o round-trip: o cliente devolve a uri que o Gateway anunciou no
         ``resources/list`` e o backend recebe/devolve a uri original.
+
+        O prefixo é aplicado a toda uri devolvida pelo backend, não só ao eco
+        exato da URI pedida: alguns backends canonizam a URI pedida
+        (acrescentam ``/``, resolvem symlink) ou devolvem sub-recursos — uma
+        uri crua sem prefixo quebraria o round-trip (re-read vira
+        ``ITEM_NOT_FOUND``, pois o registry só conhece a forma namespaced).
+        Sem guard de "já prefixada": URIs legítimas podem conter ``.`` (o
+        registry de resources é a exceção ao delimitador), então a checagem
+        produziria falso positivo — backends conformes que ecoam a uri pedida
+        continuam idênticos, e toda uri do contents é atribuível ao backend
+        que respondeu o read.
         """
         contents = result.get("contents")
         if not isinstance(contents, list):
             return result
         rewritten = []
         for item in contents:
-            if isinstance(item, dict) and item.get("uri") == original_uri:
+            if isinstance(item, dict) and isinstance(item.get("uri"), str) and item["uri"]:
                 item = dict(item)
                 item["uri"] = f"{backend}.{item['uri']}"
             rewritten.append(item)

@@ -245,11 +245,19 @@ class StdioClient(BaseClient):
         )
 
     async def _read_stderr(self) -> None:
-        """Drena o stderr do processo para o log (uma linha = um aviso)."""
+        """Drena o stderr do processo para o log (uma linha = um evento info).
+
+        Nível ``info`` de propósito: no transporte stdio o STDOUT é reservado ao
+        protocolo, então servidores MCP usam o stderr para saída informativa
+        normal (banners, "server started", debug) — não erros. Tratar tudo
+        como ``warning`` poluía o log e o console ao vivo do dashboard com
+        ruído que parece problema mas não é. O fim ANORMAL do processo é que
+        vira warning/error (detecção de queda, ver ``is_alive``).
+        """
         assert self._process is not None and self._process.stderr is not None
         try:
             async for line in self._process.stderr:
-                logger.warning(
+                logger.info(
                     "stderr do backend",
                     backend=self._config.name,
                     line=line.decode("utf-8", errors="replace").rstrip(),

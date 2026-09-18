@@ -206,13 +206,36 @@ def test_nome_com_pontos_e_espacos_e_sanitizado(tmp_path: Path) -> None:
     assert any("sanitizado" in w for w in warnings)  
     from gateway.config import GatewayConfig  
   
-    GatewayConfig.model_validate(config)  
-  
-  
-def test_prefixo_e_aplicado(tmp_path: Path) -> None:  
-    source = write_source(tmp_path, {"fs": dict(SIMPLE_STDIO_ENTRY)})  
-    config, _ = importer.import_config(source, prefix="claude")  
-    assert config["backends"][0]["name"] == "claude.fs"  
+    GatewayConfig.model_validate(config)
+
+
+def test_prefixo_e_aplicado(tmp_path: Path) -> None:
+    """Prefixo é composto com '-' (separador válido para o schema do Gateway)."""
+    source = write_source(tmp_path, {"fs": dict(SIMPLE_STDIO_ENTRY)})
+    config, _ = importer.import_config(source, prefix="claude")
+    assert config["backends"][0]["name"] == "claude-fs"
+    from gateway.config import GatewayConfig
+
+    GatewayConfig.model_validate(config)  # nome composto precisa ser aceito
+
+
+def test_prefixo_com_pontos_e_espacos_e_sanitizado(tmp_path: Path) -> None:
+    """Prefixo inválido não vaza para o nome: '.' e espaço viram '-', com aviso."""
+    source = write_source(tmp_path, {"fs": dict(SIMPLE_STDIO_ENTRY)})
+    config, warnings = importer.import_config(source, prefix="meu claude.v2")
+    assert config["backends"][0]["name"] == "meu-claude-v2-fs"
+    assert any("prefixo" in w and "sanitizado" in w for w in warnings)
+    from gateway.config import GatewayConfig
+
+    GatewayConfig.model_validate(config)  # nunca gera nome que o Gateway rejeite
+
+
+def test_prefixo_sem_caractere_valido_e_sinalizado_e_ignorado(tmp_path: Path) -> None:
+    """Prefixo que sanitiza para vazio não aborta a importação — segue sem prefixo."""
+    source = write_source(tmp_path, {"fs": dict(SIMPLE_STDIO_ENTRY)})
+    config, warnings = importer.import_config(source, prefix="***")
+    assert config["backends"][0]["name"] == "fs"
+    assert any("prefixo" in w for w in warnings)  
   
   
 def test_nomes_duplicados_apos_sanitizacao_geram_aviso(tmp_path: Path) -> None:  
@@ -361,3 +384,21 @@ def test_cli_sem_nada_convertivel_retorna_erro(
     assert exit_code == 1  
     assert "Nada a gravar" in err  
     assert not (tmp_path / "config" / "config.imported.json").exists()
+
+
+def test_aviso_de_config_vazio_condiz_com_o_schema(tmp_path: Path) -> None:
+    """O aviso de zero servidores convertidos CONDIZ com o schema (regressão).
+
+    A ``GatewayConfig`` exige ao menos um backend (model_validator); a
+    mensagem do importador reflete isso exatamente — e o CLI recusa gravar
+    um config que o boot rejeitaria. Se um dia o schema passar a aceitar
+    zero backends (painel da Fase 7 como bootstrap), esta dupla precisa ser
+    revisada JUNTO: aviso + CLI + schema.
+    """
+    source = write_source(tmp_path, {})
+
+    config, warnings = importer.import_config(source)
+
+    assert config["backends"] == []
+    assert warnings, "esperava o aviso de nada convertido"
+    assert any("exige ao menos um backend" in w for w in warnings), warnings

@@ -126,3 +126,15 @@ def test_load_config_schema_invalido_levanta_value_error(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="command"):
         load_config(config_file)
+
+
+def test_config_com_zero_backends_e_rejeitado() -> None:
+    """O schema EXIGE ao menos um backend (model_validator da GatewayConfig).
+
+    Regressão da verificação do item 24: o campo ``backends`` não tem
+    ``min_length=1`` na declaração, mas o ``model_validator`` da classe
+    rejeita lista vazia — o aviso do importador ("o Gateway exige ao menos
+    um backend") está correto e o boot de um config vazio falha cedo.
+    """
+    with pytest.raises(ValidationError, match="ao menos um backend"):
+        GatewayConfig(backends=[])

@@ -1,5 +1,7 @@
 """Testes unitários do McpServer (clients fake, sem I/O)."""  
   
+import json
+
 import pytest  
 from gateway import __version__  
   
@@ -11,7 +13,7 @@ from gateway.models import (
     ITEM_NOT_FOUND,  
     METHOD_NOT_FOUND,  
 )  
-from gateway.server import McpServer  
+from gateway.server import DIAGNOSTIC_TOOL_NAME, DIAGNOSTIC_TOOL_PAYLOAD, McpServer  
   
 ECHO_TOOL = {  
     "name": "echo",  
@@ -73,7 +75,7 @@ async def test_tools_list_agregado() -> None:
     assert response["id"] == 1  
     assert response.get("error") is None  
     tool_names = {tool["name"] for tool in response["result"]["tools"]}  
-    assert tool_names == {"backend-a.echo", "backend-b.add"}  
+    assert tool_names == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  
     by_name = {tool["name"]: tool for tool in response["result"]["tools"]}  
     assert by_name["backend-a.echo"]["description"] == "Repete texto."  
   
@@ -301,7 +303,7 @@ async def test_listagem_omite_metadata_invalida_sem_derrupar_gateway() -> None:
         {"jsonrpc": "2.0", "id": 76, "method": "prompts/list"}  
     )  
   
-    assert tools is not None and tools["result"]["tools"] == [{"name": "backend-b.add", "description": "Soma.", "inputSchema": {"type": "object", "properties": {}}}]  
+    assert tools is not None and tools["result"]["tools"] == [DIAGNOSTIC_TOOL_PAYLOAD, {"name": "backend-b.add", "description": "Soma.", "inputSchema": {"type": "object", "properties": {}}}]  
     assert resources is not None and resources["result"]["resources"] == []  
     assert prompts is not None and [item["name"] for item in prompts["result"]["prompts"]] == ["backend-a.valid-prompt"]  
   
@@ -362,6 +364,33 @@ async def test_resources_read_roteia_uri_original_e_namespaceia_contents() -> No
     assert ("resources/read", {"uri": "file:///tmp/a.txt"}) in client_a.requests  
     assert response["result"]["contents"][0]["uri"] == "backend-a.file:///tmp/a.txt"  
     assert response["result"]["contents"][0]["text"] == "conteúdo de file:///tmp/a.txt"  
+
+
+@pytest.mark.asyncio
+async def test_resources_read_namespaciar_toda_uri_do_contents() -> None:
+    """TODA uri do contents é prefixada, não só o eco exato da URI pedida.
+
+    Regressão: backends que canonizam a URI (acrescentam ``/``, resolvem
+    symlink) ou devolvem sub-recursos voltavam ao cliente SEM o prefixo
+    ``backend.`` — e um re-read dessa URI crua falhava com ``ITEM_NOT_FOUND``
+    (o registry só conhece a forma namespaced), quebrando o round-trip.
+    O round-trip do eco exato (caminho HTTP completo) é coberto por
+    ``test_resources_read_roteia_uri_original_e_namespaceia_contents``.
+    """
+    canonical = {
+        "contents": [
+            {"uri": "memory://greeting/", "text": "canonizada com / final"},
+            {"uri": "memory://greeting/child", "text": "sub-recurso"},
+            {"uri": "memory://greeting", "text": "eco exato"},
+        ]
+    }
+    out = McpServer._namespace_content_uris(canonical, "backend-a")  # noqa: SLF001
+    uris = [item["uri"] for item in out["contents"]]
+    assert uris == [
+        "backend-a.memory://greeting/",
+        "backend-a.memory://greeting/child",
+        "backend-a.memory://greeting",
+    ]
   
   
 @pytest.mark.asyncio  
@@ -456,4 +485,77 @@ async def test_prompts_get_sem_name() -> None:
         {"jsonrpc": "2.0", "id": 23, "method": "prompts/get", "params": {}}  
     )  
     assert response is not None  
-    assert response["error"]["code"] == INVALID_PARAMS
+    assert response["error"]["code"] == INVALID_PARAMS  
+
+
+@pytest.mark.asyncio
+async def test_tools_list_size_com_item_omitido_nao_desalinha_por_backend() -> None:
+    """Regressão do tools_list_size: item com metadata inválida (omitida do
+    tools/list por ``_tool_payload``) não desloca o pareamento entry↔payload.
+
+    Antes, o ``zip`` por posição atribuía o payload do backend-b ao entry do
+    backend-a e deixava as últimas entries fora de ``per_backend_chars``.
+    """
+    echo = {"name": "echo", "description": "Repete texto.", "inputSchema": {"type": "object"}}
+    quebrada = {"name": "quebrada", "description": 42, "inputSchema": {"type": "object"}}
+    add = {"name": "add", "description": "Soma.", "inputSchema": {"type": "object"}}
+    client_a = FakeClient(tools=[echo, quebrada])
+    client_b = FakeClient(tools=[add])
+    manager, registries = make_manager_for_clients({"backend-a": client_a, "backend-b": client_b})
+    server = McpServer(manager, registries)
+    await server.start()
+    try:
+        payload = server.tools_list_size()
+        # 2 tools válidas dos backends + a tool nativa gateway.diagnose,
+        # sempre presente no tools/list real (ver DIAGNOSTIC_TOOL_PAYLOAD).
+        assert payload["tools_count"] == 4
+        assert set(payload["per_backend_chars"]) == {
+            "backend-a",
+            "backend-b",
+            "gateway.diagnose",
+        }
+        assert payload["per_backend_chars"]["backend-a"] > 0
+        assert payload["per_backend_chars"]["backend-b"] > 0
+        assert payload["per_backend_chars"]["gateway.diagnose"] > 0
+    finally:
+        await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_tools_list_size_espelha_o_tools_list_real() -> None:
+    """Regressão do tools_list_size: a estimativa inclui a tool nativa
+    ``gateway.diagnose``, que o tools/list injeta ANTES do registry em 100%
+    das respostas (não vem de list_all()).
+
+    Antes, o estimador contava só as tools dos backends e subestimava
+    sistematicamente tools_count/json_chars/approx_tokens — exatamente a
+    payload presente em toda resposta, num endpoint cujo propósito é medir
+    o tools/list de verdade.
+    """
+    manager, registries = make_manager_for_clients(
+        {"backend-a": FakeClient(tools=[ECHO_TOOL]), "backend-b": FakeClient(tools=[ADD_TOOL])}
+    )
+    server = McpServer(manager, registries)
+    await server.start()
+    try:
+        size = server.tools_list_size()
+        resp = await server.process_message({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        tools = resp["result"]["tools"]
+
+        # Mesma contagem do tools/list real, e a nativa é a primeira lá:
+        assert size["tools_count"] == len(tools)
+        assert tools[0]["name"] == "gateway.diagnose"
+
+        # A soma por chave bate com a soma das payloads reais (chars):
+        chars_reais = sum(len(json.dumps(t, ensure_ascii=False)) for t in tools)
+        assert sum(size["per_backend_chars"].values()) == chars_reais
+        assert "gateway.diagnose" in size["per_backend_chars"]
+
+        # E sob filtro de sessão a nativa continua listada (sempre visível):
+        server.sessions.set_active_backends("sess-size", ["backend-a"])
+        size_filtered = server.tools_list_size("sess-size")
+        assert size_filtered["filtered"] is True
+        assert "gateway.diagnose" in size_filtered["per_backend_chars"]
+        assert "backend-b" not in size_filtered["per_backend_chars"]
+    finally:
+        await server.stop()

@@ -31,7 +31,7 @@ Uso::
     --output, -o     arquivo de destino (default: config/config.imported.json)  
     --force          sobrescreve o destino se ele já existir  
     --stdout         só imprime o JSON resultante (não grava nada)  
-    --prefix NOME    prefixa "NOME." em todos os backends importados (útil  
+    --prefix NOME    prefixa "NOME-" em todos os backends importados (útil  
                      para evitar colisão de nomes ao mesclar com um config  
                      que já tem backends)  
     --list-servers   só lista o que foi encontrado, sem converter  
@@ -203,6 +203,14 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
     e aplica o ``prefix`` opcional antes de delegar a conversão a
     ``convert_entry``.
 
+    O prefixo é sanitizado como qualquer nome e composto com ``-`` — NÃO com
+    ``.``: o nome de backend é validado contra o padrão do Gateway
+    (``BACKEND_NAME_PATTERN``, que proíbe ``.`` por ser o delimitador do
+    namespace ``backend.<id>``), então um prefixo composto com ``.``
+    (``claude.meu-server``) produziria um config.json que o Gateway rejeita
+    no boot. Prefixo sem nenhum caractere válido não aborta a importação:
+    é sinalizado e ignorado.
+
     Levanta ``ValueError`` com mensagem clara para arquivos ausentes,
     malformados ou sem a seção ``mcpServers``.
     """
@@ -215,6 +223,17 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
     backends: list[dict[str, Any]] = []
     warnings: list[str] = []
     used_names: set[str] = set()
+    clean_prefix = sanitize_backend_name(prefix)
+    if prefix and not clean_prefix:
+        warnings.append(
+            f"prefixo '{prefix}' sem nenhum caractere válido (letras, números, "
+            "'_' ou '-') — importando sem prefixo"
+        )
+    elif prefix and clean_prefix != prefix:
+        warnings.append(
+            f"prefixo '{prefix}' sanitizado para '{clean_prefix}' (o Gateway "
+            "não aceita espaços/pontos — viram prefixo de namespace)"
+        )
     for server_name, entry in raw["mcpServers"].items():
         clean = sanitize_backend_name(str(server_name))
         if not clean:
@@ -228,8 +247,11 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
                 f"[{server_name}] nome sanitizado para '{clean}' (o Gateway "
                 "não aceita espaços/pontos — viram prefixo de namespace)"
             )
-        if prefix:
-            clean = f"{prefix}.{clean}"
+        if clean_prefix:
+            # Separador '-' e não '.': o nome de backend não pode conter '.'
+            # (é o delimitador do namespace; BACKEND_NAME_PATTERN rejeita), e
+            # um prefixo composto com '.' geraria backends rejeitados no boot.
+            clean = f"{clean_prefix}-{clean}"
         if clean in used_names:
             warnings.append(
                 f"[{server_name}] nome '{clean}' já usado por outra entrada "
@@ -245,10 +267,8 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
 
     gateway_config: dict[str, Any] = {"backends": backends}
     if not backends:
-        warnings.append(
-            "nenhum servidor foi convertido — o config gerado ficaria vazio "
-            "(o Gateway exige ao menos um backend)"
-        )
+        warnings.append(            "nenhum servidor foi convertido — o config gerado ficaria vazio "
+            "(o Gateway exige ao menos um backend)")
     return gateway_config, warnings
 
 
@@ -367,7 +387,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--prefix",
         default="",
-        help='prefixa "NOME." nos backends importados (ex.: --prefix claude)',
+        help='prefixa "NOME-" nos backends importados (ex.: --prefix claude)',
     )
     parser.add_argument(
         "--list-servers",

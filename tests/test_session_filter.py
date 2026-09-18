@@ -4,6 +4,12 @@ Eixo central: **não-regressão** — sem ``Mcp-Session-Id``/sem filtro, o
 comportamento é bit a bit o das fases anteriores (teste explícito abaixo).  
 O resto cobre o protocolo da extensão, isolamento entre sessões, o erro  
 "unknown tool" idêntico para tools bloqueadas e a expiração com clock fake.  
+
+Nota: a tool nativa ``gateway.diagnose`` é injetada em TODOS os  
+``tools/list`` (mesmo com filtro ativo — não pertence a nenhum backend),  
+então as asserções de conjunto de tools a incluem via  
+``DIAGNOSTIC_TOOL_NAME``; em views onde os backends filtrados somem, ela é  
+a única restante.  
 """  
   
 import httpx  
@@ -11,7 +17,7 @@ import pytest
   
 from conftest import FakeClient, make_manager_for_clients  
 from gateway.http_server import create_app  
-from gateway.server import McpServer  
+from gateway.server import DIAGNOSTIC_TOOL_NAME, DIAGNOSTIC_TOOL_PAYLOAD, McpServer  
 from gateway.sessions import SessionFilter  
   
 ECHO_TOOL = {  
@@ -85,7 +91,7 @@ async def test_sem_sessao_comportamento_identico_ao_anterior() -> None:
     try:  
         response = await rpc(server, "tools/list")  
         names = {t["name"] for t in response["result"]["tools"]}  
-        assert names == {"backend-a.echo", "backend-b.add"}  
+        assert names == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  
   
         response = await rpc(server, "resources/list")  
         uris = {r["uri"] for r in response["result"]["resources"]}  
@@ -116,7 +122,7 @@ async def test_sessao_sem_filtro_vira_acesso_total() -> None:
     try:  
         response = await rpc(server, "tools/list", session_id="sess-sem-filtro")  
         names = {t["name"] for t in response["result"]["tools"]}  
-        assert names == {"backend-a.echo", "backend-b.add"}  
+        assert names == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  
         response = await rpc(  
             server, "gateway/session/get_active_backends", session_id="sess-sem-filtro"  
         )  
@@ -138,6 +144,35 @@ async def test_set_active_backends_sem_sessao_retorna_invalid_request() -> None:
         assert "Mcp-Session-Id" in response["error"]["message"]  
     finally:  
         await server.stop()  
+  
+  
+@pytest.mark.asyncio  
+async def test_get_e_clear_sem_sessao_retornam_invalid_request() -> None:  
+    """get/clear_active_backends sem Mcp-Session-Id: -32600, como o set.  
+  
+    Contrato simétrico (regressão): antes, get respondia  
+    ``active_backends: null, filtered: false`` sem sessão e clear era um  
+    no-op silencioso com sucesso — o cliente não tinha sinal de que a  
+    operação foi inócua. O README já documentava a regra geral: "Método de  
+    sessão sem o header → -32600"; agora os três métodos a cumprem.  
+    """  
+    server, _ = make_server()  
+    await server.start()  
+    try:  
+        for method in (  
+            "gateway/session/get_active_backends",  
+            "gateway/session/clear_active_backends",  
+        ):  
+            response = await rpc(server, method)  
+            assert response["error"]["code"] == -32600, method  
+            assert "Mcp-Session-Id" in response["error"]["message"], method  
+  
+        # E nada foi criado/alterado: get COM header confirma o estado  
+        # sem filtro (o clear sem header não "limpou" nada de verdade).  
+        response = await rpc(server, "gateway/session/get_active_backends", session_id="s")  
+        assert response["result"] == {"active_backends": None, "filtered": False}  
+    finally:  
+        await server.stop()
   
   
 @pytest.mark.asyncio  
@@ -214,14 +249,15 @@ async def test_clear_volta_a_ver_tudo() -> None:
             session_id="s",  
         )  
         response = await rpc(server, "tools/list", session_id="s")  
-        assert {t["name"] for t in response["result"]["tools"]} == {"backend-a.echo"}  
+        assert {t["name"] for t in response["result"]["tools"]} == {"backend-a.echo", DIAGNOSTIC_TOOL_NAME}  
   
         await rpc(server, "gateway/session/clear_active_backends", session_id="s")  
         response = await rpc(server, "tools/list", session_id="s")  
-        assert {t["name"] for t in response["result"]["tools"]} == {  
-            "backend-a.echo",  
-            "backend-b.add",  
-        }  
+        assert {t["name"] for t in response["result"]["tools"]} == {
+                "backend-a.echo",
+                "backend-b.add",
+                DIAGNOSTIC_TOOL_NAME,
+            }  
     finally:  
         await server.stop()  
   
@@ -237,7 +273,7 @@ async def test_filtro_aplica_a_tools_resources_e_prompts() -> None:
             session_id="s",  
         )  
         tools = await rpc(server, "tools/list", session_id="s")  
-        assert {t["name"] for t in tools["result"]["tools"]} == {"backend-a.echo"}  
+        assert {t["name"] for t in tools["result"]["tools"]} == {"backend-a.echo", DIAGNOSTIC_TOOL_NAME}  
         resources = await rpc(server, "resources/list", session_id="s")  
         assert {r["uri"] for r in resources["result"]["resources"]} == {  
             "backend-a.memory://greet"  
@@ -331,10 +367,10 @@ async def test_sessoes_isoladas_com_filtros_diferentes() -> None:
         names_none = {  
             t["name"] for t in (await rpc(server, "tools/list"))["result"]["tools"]  
         }  
-        assert names_a == {"backend-a.echo"}  
-        assert names_b == {"backend-b.add"}  
-        assert names_all == {"backend-a.echo", "backend-b.add"}  # sessão sem filtro  
-        assert names_none == {"backend-a.echo", "backend-b.add"}  # sem header  
+        assert names_a == {"backend-a.echo", DIAGNOSTIC_TOOL_NAME}  
+        assert names_b == {"backend-b.add", DIAGNOSTIC_TOOL_NAME}  
+        assert names_all == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  # sessão sem filtro  
+        assert names_none == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  # sem header  
     finally:  
         await server.stop()  
   
@@ -358,7 +394,7 @@ async def test_filtro_reflete_backend_removido_do_registry() -> None:
         server.backend_manager._unregister("backend-b")  
   
         response = await rpc(server, "tools/list", session_id="s")  
-        assert response["result"]["tools"] == []  # view filtrada fica vazia, sem erro  
+        assert response["result"]["tools"] == [DIAGNOSTIC_TOOL_PAYLOAD]  # só a nativa (não pertence a backend); view filtrada fica vazia, sem erro  
     finally:  
         await server.stop()  
   
@@ -417,14 +453,15 @@ async def test_sessao_expirada_no_gateway_vira_acesso_total() -> None:
             session_id="s",  
         )  
         response = await rpc(server, "tools/list", session_id="s")  
-        assert {t["name"] for t in response["result"]["tools"]} == {"backend-a.echo"}  
+        assert {t["name"] for t in response["result"]["tools"]} == {"backend-a.echo", DIAGNOSTIC_TOOL_NAME}  
   
         clock.advance(2.0)  # TTL de 1s estourado  
         response = await rpc(server, "tools/list", session_id="s")  
-        assert {t["name"] for t in response["result"]["tools"]} == {  
-            "backend-a.echo",  
-            "backend-b.add",  
-        }  
+        assert {t["name"] for t in response["result"]["tools"]} == {
+                "backend-a.echo",
+                "backend-b.add",
+                DIAGNOSTIC_TOOL_NAME,
+            }  
     finally:  
         await server.stop()  
   
@@ -465,14 +502,14 @@ async def test_http_header_de_sessao_controla_o_filtro() -> None:
         )  
         resp = await http_rpc(app, "tools/list", session_id="sess-http")  
         names = {t["name"] for t in resp.json()["result"]["tools"]}  
-        assert names == {"backend-a.echo"}  
+        assert names == {"backend-a.echo", DIAGNOSTIC_TOOL_NAME}  
   
         resp = await http_rpc(app, "tools/list", session_id="outra-sessao")  
         names = {t["name"] for t in resp.json()["result"]["tools"]}  
-        assert names == {"backend-a.echo", "backend-b.add"}  
+        assert names == {"backend-a.echo", "backend-b.add", DIAGNOSTIC_TOOL_NAME}  
   
         resp = await http_rpc(app, "tools/list")  # sem header  
-        assert len(resp.json()["result"]["tools"]) == 2  
+        assert len(resp.json()["result"]["tools"]) == 3  # 2 dos backends + a nativa  
     finally:  
         await server.stop()  
   
@@ -482,10 +519,12 @@ async def test_api_tools_size_diagnostico() -> None:
     """/api/tools/size: contagem, chars, tokens aprox., por backend, por sessão.  
   
     Mesma auth do /api/servers (401 sem token). A soma por backend é menor  
-    que o total porque o total inclui o envelope ``{"tools": [...]}``. Uma  
-    sessão filtrada expõe menos tools e menos chars — o ganho mensurável da  
-    fase.  
-    """  
+    que o total porque o total inclui o envelope ``{"tools": [...]}``. A tool  
+    nativa ``gateway.diagnose`` (sempre injetada no tools/list real) aparece  
+    como própria chave em ``per_backend_chars``. Uma sessão filtrada expõe  
+    menos tools e menos chars — o ganho mensurável da fase (a nativa segue  
+    sempre visível, também na medida).  
+    """    
     server, _ = make_server()  
     await server.start()  
     try:  
@@ -499,12 +538,17 @@ async def test_api_tools_size_diagnostico() -> None:
             resp = await client.get("/api/tools/size", headers={"Authorization": "Bearer segredo"})  
             assert resp.status_code == 200  
             payload = resp.json()  
-            assert payload["tools_count"] == 2  
+            # 2 tools dos backends + a nativa gateway.diagnose, sempre presente:
+            assert payload["tools_count"] == 3  
             assert payload["filtered"] is False  
             assert payload["session_id"] is None  
             assert payload["json_chars"] > 0  
             assert payload["approx_tokens"] == payload["json_chars"] // 4  
-            assert set(payload["per_backend_chars"]) == {"backend-a", "backend-b"}  
+            assert set(payload["per_backend_chars"]) == {  
+                "backend-a",  
+                "backend-b",  
+                "gateway.diagnose",  
+            }  
             assert sum(payload["per_backend_chars"].values()) < payload["json_chars"]  
   
             set_resp = await http_rpc(  
@@ -523,7 +567,8 @@ async def test_api_tools_size_diagnostico() -> None:
                 },  
             )  
             payload_filtered = resp.json()  
-            assert payload_filtered["tools_count"] == 1  
+            # tool do backend-a + a nativa (sempre visível, mesmo filtrada):
+            assert payload_filtered["tools_count"] == 2  
             assert payload_filtered["filtered"] is True  
             assert payload_filtered["session_id"] == "sess-medida"  
             assert payload_filtered["json_chars"] < payload["json_chars"]  

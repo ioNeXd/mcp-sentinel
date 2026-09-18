@@ -28,4 +28,7 @@ jobs:
       # dizer qual foi). Um teste que passar de 60s falha com o nome no log.  
       - run: pytest -q -v --timeout=60  
       - run: ruff check .  
-      - run: mypy gateway/
+      # mypy segue o files= do pyproject.toml (gateway + main.py + scripts/):
+      # regressões de tipo no ponto de entrada e no importador não passam
+      # despercebidas — ruff check . cobre estilo, não tipos.
+      - run: mypy

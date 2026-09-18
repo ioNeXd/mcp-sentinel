@@ -3,10 +3,12 @@
 import asyncio  
 import json  
 import sys  
+from typing import Any  
   
 import pytest  
+import structlog  
   
-from conftest import FAKE_BACKEND_PATH, capture_structlog_events  
+from conftest import FAKE_BACKEND_PATH, capture_structlog_events, configure_quiet_structlog  
 from gateway.clients.base import BackendListResponseError, BaseClient  
 from gateway.clients.stdio_client import StdioClient  
 from gateway.config import BackendConfig  
@@ -322,3 +324,53 @@ async def test_handle_message_rejeita_jsonrpc_invalido() -> None:
         assert client._pending == {}  # noqa: SLF001  
     finally:  
         await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_stderr_do_backend_e_logado_como_info() -> None:
+    """Saída informativa do stderr NÃO é warning (regressão de ruído operacional).
+
+    No stdio o stdout é reservado ao protocolo: servidores MCP mandam banners
+    e "server started" pelo stderr. O fake_backend escreve um banner no
+    startup — estas linhas devem chegar ao log como ``info``; warning fica
+    reservado para quedas/falhas reais (o console do dashboard depende disso
+    para não dessensibilizar).
+
+    Captura própria (e não ``capture_structlog_events``) por dois motivos: o
+    banner é drenado DURANTE o ``start()``, então a captura precisa estar
+    ativa antes dele; e o nível só existe no evento com o processor
+    ``add_log_level`` na cadeia, que a captura do conftest não inclui.
+    """
+    events: list[dict[str, Any]] = []
+
+    def capture(_logger: Any, _method: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+        events.append(event_dict)
+        return event_dict
+
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            capture,
+        ],
+        wrapper_class=structlog.BoundLogger,
+        logger_factory=structlog.ReturnLoggerFactory(),
+    )
+    client = make_client()
+    alive = False
+    try:
+        await client.start()
+        alive = client.is_alive()
+        # Aguarda ao menos uma linha de stderr chegar (o banner do startup).
+        stderr_events: list[dict[str, Any]] = []
+        for _ in range(50):
+            stderr_events = [e for e in events if e["event"] == "stderr do backend"]
+            if stderr_events:
+                break
+            await asyncio.sleep(0.1)
+    finally:
+        await client.stop()
+        configure_quiet_structlog()
+    assert stderr_events, "banner do fake deveria chegar via stderr do backend"
+    assert all(e.get("level") == "info" for e in stderr_events)
+    assert alive, "client deveria continuar vivo após drenar o stderr"

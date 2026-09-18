@@ -398,6 +398,13 @@ class SseClient(BaseClient):
         async for line in lines:
             if not resolved and loop.time() >= endpoint_deadline:
                 resolve_first_event()
+                # O resolve consumiu data_lines/event_name parciais — SEM esta
+                # limpeza, a linha em branco seguinte (agora com resolved=True)
+                # despacharia o MESMO evento de novo (ou o parcial concatenado
+                # com o que vier depois): double-dispatch num keep-alive com
+                # data: que anteceda o primeiro evento completo.
+                data_lines = []
+                event_name = None
             if line.strip() == "":
                 if data_lines or event_name is not None:
                     if resolved:

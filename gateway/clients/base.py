@@ -13,12 +13,7 @@ from gateway.errors import (
     BackendStateConflictError,
     BackendTimeoutError,
 )
-from gateway.models import (
-    INTERNAL_ERROR,
-    METHOD_NOT_FOUND,
-    PROTOCOL_VERSION,
-    is_supported_protocol_version,
-)
+from gateway.models import (INTERNAL_ERROR, METHOD_NOT_FOUND, PROTOCOL_VERSION)
 
 JSON_CONTENT_TYPE = "application/json"
 SSE_MEDIA_TYPE = "text/event-stream"
@@ -307,11 +302,15 @@ class BaseClient(ABC):
                 raise BackendError("Backend retornou resultado de initialize não-objeto")
             backend_protocol = result.get("protocolVersion")
             backend_caps = result.get("capabilities")
-            if (
-                not isinstance(backend_protocol, str)
-                or not is_supported_protocol_version(backend_protocol)
-                or backend_protocol != PROTOCOL_VERSION
-            ):
+            # Igualdade estrita com a ÚNICA versão que o Gateway fala. Não
+            # incluir ``is_supported_protocol_version`` aqui: com
+            # ``PROTOCOL_VERSION ∈ PROTOCOL_VERSIONS``, todo valor igual à
+            # versão do Gateway já é suportado — o termo é logicamente morto
+            # (mesma análise do lado servidor, item 14) e só sugeriria uma
+            # negociação mais rica do que existe. Quando a multi-versão for
+            # implementada, a decisão é TROCAR a igualdade pela semântica do
+            # spec, não somar condições.
+            if backend_protocol != PROTOCOL_VERSION:
                 raise BackendError(
                     "Backend respondeu uma versão de protocolo incompatível no initialize"
                 )
