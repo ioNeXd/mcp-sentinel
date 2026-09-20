@@ -221,10 +221,14 @@ aceito (basta uma prova correta). O dashboard (`GET /`) e o console de logs
 `/api/servers` aceitam **apenas** o header Bearer.  
   
 > **Segurança:** tokens em query string podem aparecer em logs de proxies e no  
-> histórico de navegador/terminal. Para uso **local** é aceitável (o caso de  
-> uso pensado). Para expor além da máquina, prefira o header + TLS. O Gateway  
-> desliga o access log do uvicorn e nunca loga a URL da request, então o token  
-> não vaza nos logs do próprio Gateway.  
+> histórico de navegador/terminal. Para uso **local** (`127.0.0.1` ou `localhost`)  
+> é aceitável — o caso de uso principal. **Para expor além da máquina local  
+> (`MCP_GATEWAY_HOST=0.0.0.0` ou IP público), você DEVE usar HTTPS** (reverse proxy  
+> com TLS: nginx, Caddy, Cloudflare Tunnel) **e preferir o header Bearer** em vez de  
+> `?token=`. Sem HTTPS, o token vaza em plain text na rede, logs de proxy e histórico.  
+> O Gateway emite um aviso no startup quando detecta `auth_token` definido mas bind  
+> em host não-localhost. O access log do uvicorn fica desligado e o Gateway nunca  
+> loga a URL da request, então o token não vaza nos logs do próprio Gateway.  
   
 ---  
   

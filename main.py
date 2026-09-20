@@ -113,10 +113,22 @@ async def main() -> int:
         logger.error("falha ao carregar configuração", path=str(config_path), error=str(exc))
         return 1
 
+    host = _configured_host()
     if config.auth_token is None:
         logger.warning(
             "rodando SEM autenticação — defina auth_token no config.json para expor além da máquina local"
         )
+    else:
+        # Aviso de segurança: auth_token via query string (?token=) vaza em logs
+        # de proxies/navegadores se não usar HTTPS. Localhost é aceitável (uso
+        # local); bind 0.0.0.0 ou IP não-localhost exige TLS.
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            logger.warning(
+                "auth_token definido mas servidor exposto sem HTTPS — tokens em query string "
+                "(?token=) vazam em logs de proxy e histórico de navegador. Use TLS ou restrinja "
+                "a 127.0.0.1 para uso local seguro.",
+                host=host
+            )
 
     registries = (ToolRegistry(), ResourceRegistry(), PromptRegistry())
     backend_manager = BackendManager(config, registries)
@@ -147,7 +159,7 @@ async def main() -> int:
     server = uvicorn.Server(
         uvicorn.Config(
             app,
-            host=_configured_host(),
+            host=host,
             port=port,
             log_level="warning",
             # O access log do uvicorn emite a URL COMPLETA da request (incluindo

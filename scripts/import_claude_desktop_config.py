@@ -52,6 +52,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -132,8 +133,12 @@ def convert_entry(name: str, entry: dict[str, Any]) -> tuple[dict[str, Any] | No
     Devolve ``(backend_ou_None, avisos)``. ``None`` + aviso significa entrada
     NÃO convertida (nunca é descartada silenciosamente). A ordem de decisão é:
     ``env`` é sempre sinalizado (o Gateway não o aplica); em seguida tenta o
-    caminho remoto (``url`` + ``type``), depois a detecção de ponte, e por
-    último o caminho stdio comum.
+    caminho remoto (``url`` + ``type``, que exige ``command`` AUSENTE), depois
+    a detecção de ponte, e por último o caminho stdio comum. Em AMBOS os
+    caminhos de sucesso (remoto e stdio), campos não consumidos geram aviso
+    de "campos ignorados" — nunca descarte silencioso. Entrada com ``url`` E
+    ``command`` vira stdio com aviso explícito de ambiguidade (a ``url`` é
+    ignorada de propósito, não é esquecida).
     """
     warnings: list[str] = []
     if not isinstance(entry, dict):
@@ -153,6 +158,12 @@ def convert_entry(name: str, entry: dict[str, Any]) -> tuple[dict[str, Any] | No
             backend: dict[str, Any] = {"name": name, "type": remote_type, "url": url}
             if entry.get("headers"):
                 backend["headers"] = dict(entry["headers"])
+            # Mesma simetria do ramo stdio: campos não consumidos nunca são
+            # descartados em silêncio. "env" já foi sinalizado no topo e
+            # "headers" é consumido acima (mesmo vazio/falsy).
+            unknown = sorted(set(entry) - {"url", "type", "headers", "env"})
+            if unknown:
+                warnings.append(f"[{name}] campos ignorados: {', '.join(unknown)}")
             return backend, warnings
         return None, [
             f"[{name}] entrada com 'url' mas sem 'type': 'http'/'sse' — o "
@@ -183,13 +194,28 @@ def convert_entry(name: str, entry: dict[str, Any]) -> tuple[dict[str, Any] | No
             "era uma linha de shell, separe-o manualmente"
         )
 
+    # Ambiguidade url+command (o ramo remoto exige command AUSENTE): com ambos
+    # presentes, a escolha é stdio — mas isso precisa ser EXPLÍCITO, porque a
+    # entrada podia ser um servidor remoto mal declarado. O aviso substitui a
+    # listagem genérica de "url" em 'campos ignorados' (ela sai do conjunto
+    # known abaixo), então não há menção dupla.
+    if url:
+        warnings.append(
+            f"[{name}] entrada tem 'url' E 'command' — tratada como stdio "
+            "(command/args) e a 'url' é IGNORADA; se for um servidor remoto, "
+            'declare {"type": "http"|"sse", "url": "..."} sem command/args'
+        )
+
     backend = {
         "name": name,
         "type": "stdio",
         "command": _expand_env(command),
         "args": [_expand_env(arg) for arg in args],
     }
-    unknown = sorted(set(entry) - {"command", "args", "env", "type"})
+    ignored = set(entry) - {"command", "args", "env", "type"}
+    if url:  # url vazia/ausente não teve aviso: segue na lista genérica
+        ignored.discard("url")
+    unknown = sorted(ignored)
     if unknown:
         warnings.append(f"[{name}] campos ignorados: {', '.join(unknown)}")
     return backend, warnings
@@ -267,8 +293,10 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
 
     gateway_config: dict[str, Any] = {"backends": backends}
     if not backends:
-        warnings.append(            "nenhum servidor foi convertido — o config gerado ficaria vazio "
-            "(o Gateway exige ao menos um backend)")
+        warnings.append(
+            "nenhum servidor foi convertido — o config gerado ficaria vazio "
+            "(o Gateway exige ao menos um backend)"
+        )
     return gateway_config, warnings
 
 
@@ -331,7 +359,25 @@ def _write_output(destination: Path, content: str, force: bool) -> bool:
     (disco cheio, processo morto) nunca deixa o destino truncado/corrompido —
     ou ele fica com o conteúdo antigo intacto, ou com o novo por completo. O
     temporário é removido em caso de erro para não deixar lixo.
+
+    Segurança: path traversal bloqueado — destino deve estar dentro do diretório
+    do projeto (cwd ou subdiretórios). Paths absolutos ou com '..' que apontam
+    fora são rejeitados.
     """
+    # Bloqueia path traversal: resolve o destino e verifica se está dentro do cwd.
+    # ponytail: sandboxing mais rigoroso (chroot/AppArmor) quando necessário.
+    try:
+        resolved = destination.resolve()
+        cwd = Path.cwd().resolve()
+        # Checa se resolved é subpath de cwd (ou o próprio cwd).
+        resolved.relative_to(cwd)
+    except (ValueError, OSError) as exc:
+        print(
+            f"ERRO: path '{destination}' inválido ou fora do diretório do projeto. "
+            f"Path traversal não permitido. ({exc})",
+            file=sys.stderr,
+        )
+        return False
     if destination.exists() and not force:
         print(
             f"ERRO: {destination} já existe. Use --force para sobrescrever "
@@ -340,14 +386,19 @@ def _write_output(destination: Path, content: str, force: bool) -> bool:
         )
         return False
     destination.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = destination.with_name(destination.name + ".tmp")
+    # Nome UNICO por execucao (mkstemp no mesmo diretorio):
+    # o nome fixo corrompia escritas concorrentes.
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=str(destination.parent)
+    )
     try:
-        tmp_path.write_text(content, encoding="utf-8")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
         os.replace(tmp_path, destination)
     except BaseException:
         try:
-            tmp_path.unlink()
-        except FileNotFoundError:
+            os.unlink(tmp_path)
+        except OSError:
             pass
         raise
     return True
