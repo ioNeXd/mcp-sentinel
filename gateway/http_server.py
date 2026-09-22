@@ -898,8 +898,7 @@ async function refresh() {{
       const h = await healthRes.json();  
       const pill = document.getElementById("status-pill");  
       pill.className = "pill pill-" + h.status;  
-      pill.innerHTML = '<span class="dot"></span>';  
-      pill.appendChild(document.createTextNode(h.status));  
+      pill.innerHTML = '<span class="dot"></span><span class="pill-text">' + h.status + '</span>';  
       document.getElementById("totals-stat").textContent =  
         `Tools: ${{h.tools_count}} · Resources: ${{h.resources_count}} · Prompts: ${{h.prompts_count}}`;  
     }}  
