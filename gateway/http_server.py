@@ -283,8 +283,12 @@ body.readonly-mode .card-remove, body.readonly-mode #shutdown-gateway { display:
 #console .line { cursor: pointer; display: flex; align-items: baseline; gap: .4rem; }
 #console .line:hover { background: rgba(255,255,255,.04); }
 #console .line.req-active { background: rgba(91,140,255,.12); }
-#console .reqdot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
+#console .line.reqdot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
 #console .msg { flex: 1; }
+#console .msg.lvl-error, #console .msg.lvl-critical { color: var(--err); }
+#console .msg.lvl-warning { color: var(--warn); }
+#console .msg.lvl-info { color: var(--text); }
+#console .msg.lvl-debug { color: var(--muted); }
 #console .dedup-badge {
   display: inline-block;
   background: rgba(255,165,0,.25);
@@ -1186,25 +1190,28 @@ function buildLineEl(evt) {{
   ts.className = "ts";  
   ts.textContent = fmtTs(evt.timestamp);  
   div.appendChild(ts);  
-  const msg = document.createElement("span");
-  msg.className = "msg";
   if (evt.event === "_repeated") {{
-    // Evento deduplicado: mostra "event_name ×N" com badge.
-    msg.textContent = evt.original_event || "repeated";
+    // Dedup: badge ×N entre timestamp e nome do evento.
     const badge = document.createElement("span");
     badge.className = "dedup-badge";
     badge.textContent = "×" + (evt.count || "?");
-    msg.appendChild(badge);
+    div.appendChild(badge);
+    const msg = document.createElement("span");
+    msg.className = "msg lvl-" + lvl;
+    msg.textContent = evt.original_event || "repeated";
+    div.appendChild(msg);
     if (evt.backend) {{
       const be = document.createElement("span");
       be.className = "backend-tag";
       be.textContent = evt.backend;
-      msg.appendChild(be);
+      div.appendChild(be);
     }}
   }} else {{
+    const msg = document.createElement("span");
+    msg.className = "msg lvl-" + lvl;
     msg.textContent = evt.event || JSON.stringify(evt);
-  }}
-  div.appendChild(msg);  
+    div.appendChild(msg);
+  }}  
   if (evt.request_id) {{  
     div.addEventListener("click", () => {{  
       requestIdFilter = requestIdFilter === evt.request_id ? null : evt.request_id;  
