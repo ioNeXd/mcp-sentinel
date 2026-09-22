@@ -107,7 +107,7 @@ body {
 #sidebar.collapsed { width: var(--sb-collapsed); }
 #sidebar::-webkit-scrollbar { display: none; }
 #sidebar .sb-item {
-  display: flex; align-items: center; justify-content: center; gap: .6rem;
+  display: flex; align-items: center; justify-content: flex-start; gap: .6rem;
   padding: .55rem .7rem; min-height: 48px; width: 100%; cursor: pointer;
   color: var(--muted); font-size: .82rem; text-decoration: none;
   border: none; border-radius: .5rem; margin: 2px .4rem;
@@ -123,9 +123,11 @@ body {
 #sidebar.collapsed .sb-item { flex-direction: column; justify-content: center; gap: 0; padding: .55rem .2rem; margin: 2px; }
 #sidebar .sb-divider { width: 70%; height: 1px; background: var(--border); margin: .3rem auto; flex-shrink: 0; }
 #sidebar .sb-logo {
-  display: flex; align-items: center; gap: .5rem; padding: .4rem .7rem;
-  color: var(--accent); font-size: 1rem; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .4rem .7rem;
+  color: var(--accent); font-size: 1rem; font-weight: 600; width: 100%;
 }
+#sidebar:not(.collapsed) .sb-logo { justify-content: flex-start; }
+#sidebar.collapsed .sb-logo { justify-content: center; }
 #sidebar .sb-logo .sb-icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 #sidebar.collapsed .sb-logo .sb-logo-text { opacity: 0; width: 0; overflow: hidden; }
 #sidebar .sb-toggle {
@@ -159,8 +161,9 @@ body {
 #sidebar .pill { font-size: .58rem; padding: .1rem .4rem; margin: .2rem auto; display: flex; justify-content: center; }
 #sidebar .pill .dot { width: .35rem; height: .35rem; }
 #sidebar .pill .pill-text { transition: opacity .15s; overflow: hidden; white-space: nowrap; }
+#sidebar:not(.collapsed) .pill { justify-content: flex-start; margin-left: .7rem; margin-right: .7rem; }
+#sidebar.collapsed .pill { justify-content: center; padding: .1rem; }
 #sidebar.collapsed .pill .pill-text { display: none; }
-#sidebar.collapsed .pill { padding: .1rem; }
 #sidebar .switch { display: flex; align-items: center; gap: .5rem; font-size: .78rem; color: var(--muted); }
 #sidebar .switch input { margin: 0; }
 #sb-stats-wrapper { padding: 0 .2rem; overflow: hidden; transition: max-height .15s, opacity .15s; }
