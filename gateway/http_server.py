@@ -26,6 +26,7 @@ import asyncio
 import html
 import json
 import os
+import shutil
 import re
 import secrets
 import threading
@@ -35,6 +36,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -363,6 +365,9 @@ def _render_dashboard(
   <label class="switch"><input type="checkbox" id="density-toggle"><span>Compacto</span></label>
   <label class="switch"><input type="checkbox" id="readonly-toggle"><span>Somente leitura</span></label>
   <button id="export-snapshot" class="btn-secondary" title="Baixar JSON com /health + /api/servers + /api/tools/size">Exportar snapshot</button>
+  <button id="export-config" class="btn-secondary" title="Baixar config.json">Exportar config</button>
+  <button id="import-config-trigger" class="btn-secondary" title="Importar config.json">Importar config</button>
+  <input type="file" id="import-config-file" accept="application/json" style="display:none;">
   <button id="open-settings" class="btn-secondary">⚙ Configurações</button>
   <button id="open-import-claude" class="btn-secondary">Importar Claude Desktop</button>
   <button id="open-add-mcp" class="btn-primary">+ Adicionar MCP</button>
@@ -431,8 +436,10 @@ def _render_dashboard(
       </div>  
       <p id="add-mcp-hint" class="hint">Salva no config.json e já tenta subir o backend na hora.</p>  
       <p id="add-mcp-error" class="error hidden"></p>  
+      <div id="test-connectivity-result" class="hint hidden"></div>
       <div class="modal-actions">  
         <button type="button" id="cancel-add-mcp">Cancelar</button>  
+        <button type="button" id="test-connectivity" class="btn-secondary">Testar</button>  
         <button type="submit" id="submit-add-mcp" class="btn-primary">Adicionar</button>  
       </div>  
     </form>  
@@ -479,6 +486,7 @@ def _render_dashboard(
       <h4>Backup do config.json</h4>
       <div class="modal-actions" style="justify-content: flex-start;">
         <button type="button" id="download-backup" class="btn-secondary">Baixar backup</button>
+        <button type="button" id="export-config" class="btn-secondary">Exportar config</button>
         <button type="button" id="restore-trigger" class="btn-secondary">Restaurar de um backup</button>
         <input type="file" id="restore-file" accept="application/json" style="display:none;">
       </div>
@@ -843,8 +851,8 @@ document.getElementById("export-snapshot").addEventListener("click", async () =>
   }} finally {{  
     btn.disabled = false;  
   }}  
-}});  
-  
+}});
+
 // ---- Atalhos de teclado ----  
 document.addEventListener("keydown", (ev) => {{  
   const tag = document.activeElement ? document.activeElement.tagName : "";  
@@ -976,6 +984,62 @@ document.getElementById("restore-file").addEventListener("change", async (ev) =>
   }} catch (e) {{
     restoreErrorEl.textContent = "Erro de rede ou arquivo inválido.";
     restoreErrorEl.classList.remove("hidden");
+  }} finally {{
+    ev.target.value = "";
+  }}
+}});
+
+// ---- Exportar config ----
+document.getElementById("export-config").addEventListener("click", async () => {{
+  const btn = document.getElementById("export-config");
+  btn.disabled = true;
+  try {{
+    const res = await fetch("/api/config/export", {{ headers: AUTH_HEADERS }});
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const text = await res.text();
+    const blob = new Blob([text], {{ type: "application/json" }});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mcp-gateway-config-export-${{Date.now()}}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }} catch (e) {{
+    alert("Erro ao exportar o config.");
+  }} finally {{
+    btn.disabled = false;
+  }}
+}});
+
+// ---- Importar config ----
+document.getElementById("import-config-trigger").addEventListener("click", () => {{
+  document.getElementById("import-config-file").click();
+}});
+
+document.getElementById("import-config-file").addEventListener("change", async (ev) => {{
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (!confirm(`Importar "${{file.name}}"? Isso SUBSTITUI o config.json inteiro (todos os backends). O Gateway validará antes de gravar. Continuar?`)) {{
+    ev.target.value = "";
+    return;
+  }}
+  try {{
+    const text = await file.text();
+    let payload;
+    try {{ payload = JSON.parse(text); }} catch {{ alert("Arquivo não é JSON válido."); ev.target.value = ""; return; }}
+    const res = await fetch("/api/config/import", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: JSON.stringify(payload),
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (!res.ok) {{
+      alert(body.detail || `Erro ${{res.status}}: config inválido ou falha ao gravar.`);
+    }} else {{
+      alert(body.detail || "Config importado. Reinicie o Gateway para aplicar.");
+    }}
+  }} catch (e) {{
+    alert("Erro de rede ao importar.");
   }} finally {{
     ev.target.value = "";
   }}
@@ -1254,6 +1318,47 @@ form.addEventListener("submit", async (ev) => {{
     submitBtn.textContent = "Adicionar";  
   }}  
 }});  
+
+// ---- Botão "Testar" conectividade ----
+const testBtn = document.getElementById("test-connectivity");
+const testResult = document.getElementById("test-connectivity-result");
+testBtn.addEventListener("click", async () => {{
+  errorEl.classList.add("hidden");
+  testResult.classList.add("hidden");
+  const data = new FormData(form);
+  const payload = {{ name: (data.get("name") || "").trim(), type: data.get("type") }};
+  if (!payload.name) {{ errorEl.textContent = "Preencha o nome."; errorEl.classList.remove("hidden"); return; }}
+  if (payload.type === "stdio") {{
+    payload.command = (data.get("command") || "").trim();
+    payload.args = (data.get("args") || "").split("\\n").map(s => s.trim()).filter(Boolean);
+    if (!payload.command) {{ errorEl.textContent = "Preencha o comando."; errorEl.classList.remove("hidden"); return; }}
+  }} else {{
+    payload.url = (data.get("url") || "").trim();
+    if (!payload.url) {{ errorEl.textContent = "Preencha a URL."; errorEl.classList.remove("hidden"); return; }}
+  }}
+  testBtn.disabled = true;
+  testBtn.textContent = "Testando…";
+  try {{
+    const res = await fetch("/api/test-connectivity", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: JSON.stringify(payload),
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (body.ok) {{
+      testResult.textContent = `✅ OK — ${{body.detail}}${{body.latency_ms ? ` (${{body.latency_ms}}ms)` : ""}}`;
+    }} else {{
+      testResult.textContent = `❌ Falhou — ${{body.detail}}`;
+    }}
+    testResult.classList.remove("hidden");
+  }} catch (e) {{
+    testResult.textContent = "❌ Erro de rede ao testar.";
+    testResult.classList.remove("hidden");
+  }} finally {{
+    testBtn.disabled = false;
+    testBtn.textContent = "Testar";
+  }}
+}});
 </script>  
 </body>  
 </html>"""
@@ -1555,6 +1660,21 @@ document.querySelectorAll("button.act").forEach(btn => {{
 </html>"""
 
 
+
+
+def _backup_config(config_path: str) -> None:
+    """Salva config.json como .bak antes de cada escrita.
+
+    shutil.copy2 preserva metadata (mtime etc). Nao falha a request se
+    o backup nao da certo -- loga warning e continua.
+    """
+    try:
+        if os.path.exists(config_path):
+            shutil.copy2(config_path, f"{config_path}.bak")
+    except OSError as exc:
+        logger.warning("config_backup_failed", path=config_path, error=str(exc))
+
+
 def _validate_new_backend_payload(payload: Any) -> str | None:
     """Valida o corpo de ``POST /api/config/backends``.
 
@@ -1619,7 +1739,6 @@ def _build_backend_entry(payload: dict[str, Any]) -> dict[str, Any]:
             entry["args"] = args
         return entry
     return {"name": name, "type": btype, "url": payload["url"].strip()}
-
 
 def _dashboard_browser_url(auth_token: str | None) -> str:
     """URL que o auto-open do dashboard abre no navegador.
@@ -1945,6 +2064,63 @@ def create_app(
             return _unauthorized()
         return JSONResponse(content={"samples": mcp_server.backend_manager.history_for(name)})
 
+    @app.get("/api/config/export")
+    async def config_export(request: Request) -> Response:
+        """Exporta o config.json bruto (alias explícito de /api/config/backup)."""
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/export")
+            return _unauthorized()
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                raw_text = f.read()
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"falha ao ler config: {exc}"}
+            )
+        return Response(content=raw_text, media_type="application/json")
+
+    @app.post("/api/config/import")
+    async def config_import(request: Request) -> JSONResponse:
+        """Importa um config.json substituto via upload.
+
+        Valida com GatewayConfig.model_validate antes de gravar. Faz backup
+        antes de sobrescrever.
+        """
+        if not _is_authorized(request):
+            logger.info("http_auth_rejected", route="/api/config/import")
+            return _unauthorized()
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
+
+        try:
+            GatewayConfig.model_validate(payload)
+        except ValidationError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"detail": f"config inválido, nada foi gravado: {exc}"},
+            )
+
+        config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        _backup_config(config_path)
+        tmp_path = f"{config_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp_path, config_path)
+        except OSError as exc:
+            return JSONResponse(
+                status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+            )
+
+        logger.warning("config_imported_via_dashboard", backends=len(payload.get("backends", [])))
+        return JSONResponse(
+            content={"detail": "Config importado. Reinicie o Gateway para aplicar."}
+        )
+
     @app.delete("/api/servers/{name}")
     async def remove_backend_route(name: str, request: Request) -> JSONResponse:
         """Remove um backend por completo (Fase 7 — botão × do card).
@@ -2004,6 +2180,7 @@ def create_app(
             new_backends = [b for b in backends if b.get("name") != name]
             if len(new_backends) != len(backends):
                 raw_config["backends"] = new_backends
+                _backup_config(config_path)
                 tmp_path = f"{config_path}.tmp"
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(raw_config, f, indent=2, ensure_ascii=False)
@@ -2104,6 +2281,7 @@ def create_app(
                 status_code=422, content={"detail": f"configuração inválida: {exc}"}
             )
 
+        _backup_config(config_path)
         tmp_path = f"{config_path}.tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -2167,6 +2345,7 @@ def create_app(
             )
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
+        _backup_config(config_path)
         tmp_path = f"{config_path}.tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -2314,6 +2493,7 @@ def create_app(
                         )
                     },
                 )
+            _backup_config(config_path)
             tmp_path = f"{config_path}.tmp"
             try:
                 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -2423,6 +2603,7 @@ def create_app(
             )
         backends.append(entry)
 
+        _backup_config(config_path)
         tmp_path = f"{config_path}.tmp"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -2494,6 +2675,90 @@ def create_app(
         # Sem isso, o client recebe ConnectionResetError no browser.
         asyncio.get_event_loop().call_later(0.1, setattr, server, "should_exit", True)
         return JSONResponse(content={"detail": "Encerrando o Gateway…"})
+
+    @app.post("/api/test-connectivity")
+    async def test_connectivity(request: Request) -> JSONResponse:
+        """Testa conectividade com um backend antes de salvar (Fase 9).
+
+        Recebe o payload igual ao POST /api/config/backends (name, type,
+        command/args/url) e tenta uma conexão rápida: stdio spawn +
+        initialize handshake ou HTTP POST. Retorna ok/fail com latência
+        e mensagem. Não grava nada em disco.
+        """
+        if not _is_authorized(request):
+            return _unauthorized()
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
+
+        error = _validate_new_backend_payload(payload)
+        if error:
+            return JSONResponse(status_code=422, content={"detail": error})
+
+        backend_type = payload.get("type", "stdio")
+        import time as _time
+        start = _time.monotonic()
+
+        try:
+            if backend_type == "stdio":
+                # Tenta spawnar o processo e mandar initialize
+                cmd = payload["command"]
+                args = payload.get("args", [])
+                import asyncio as _aio
+                proc = await _aio.create_subprocess_exec(
+                    cmd, *args,
+                    stdin=_aio.subprocess.PIPE,
+                    stdout=_aio.subprocess.PIPE,
+                    stderr=_aio.subprocess.PIPE,
+                )
+                # Envia initialize e espera resposta com timeout
+                init_msg = json.dumps({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-03-26",
+                        "capabilities": {},
+                        "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
+                    },
+                }) + "\n"
+                proc.stdin.write(init_msg.encode())  # type: ignore
+                try:
+                    raw = await _aio.wait_for(proc.stdout.readline(), timeout=10.0)  # type: ignore
+                    elapsed = round((_time.monotonic() - start) * 1000)
+                    if raw:
+                        return JSONResponse(content={"ok": True, "latency_ms": elapsed, "detail": "conexão OK"})
+                    return JSONResponse(content={"ok": False, "latency_ms": elapsed, "detail": "processo respondeu vazio"})
+                except _aio.TimeoutError:
+                    proc.kill()
+                    return JSONResponse(content={"ok": False, "detail": "timeout aguardando resposta (10s)"})
+                finally:
+                    if proc.returncode is None:
+                        proc.kill()
+            else:
+                # HTTP/SSE: tenta POST na url
+                url = payload["url"]
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(url, json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-03-26",
+                            "capabilities": {},
+                            "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
+                        },
+                    })
+                    elapsed = round((_time.monotonic() - start) * 1000)
+                    if resp.status_code < 500:
+                        return JSONResponse(content={"ok": True, "latency_ms": elapsed, "detail": f"respondeu HTTP {resp.status_code}"})
+                    return JSONResponse(content={"ok": False, "latency_ms": elapsed, "detail": f"servidor retornou HTTP {resp.status_code}"})
+        except FileNotFoundError:
+            return JSONResponse(content={"ok": False, "detail": f"comando '{payload.get('command')}' não encontrado"})
+        except Exception as exc:
+            return JSONResponse(content={"ok": False, "detail": f"erro: {exc}"})
 
     @app.get("/api/tools/size")
     async def tools_size(request: Request) -> JSONResponse:

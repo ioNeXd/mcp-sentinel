@@ -1,5 +1,5 @@
 [project]  
-name = "mcp-sentinel"  
+name = "sentinel"  
 dynamic = ["version"]  
 requires-python = ">=3.10"  
   

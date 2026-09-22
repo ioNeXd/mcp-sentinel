@@ -171,3 +171,121 @@ class TestRateLimit:
         assert rl.allow("a") is True
         assert rl.allow("b") is True
         assert rl.allow("a") is False
+
+
+# --- Backup automático ---
+
+class TestAutoBackup:
+    def test_backup_created_before_write(self, tmp_path):
+        import json
+        from gateway.http_server import _backup_config
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"backends": []}), encoding="utf-8")
+        _backup_config(str(config))
+        bak = tmp_path / "config.json.bak"
+        assert bak.exists()
+        assert json.loads(bak.read_text(encoding="utf-8")) == {"backends": []}
+
+    def test_backup_no_crash_on_missing_file(self, tmp_path):
+        from gateway.http_server import _backup_config
+        _backup_config(str(tmp_path / "nonexistent.json"))  # should not raise
+
+
+# --- Teste de conectividade ---
+
+class TestConnectivity:
+    @pytest.mark.anyio
+    async def test_rejects_invalid_json(self, app):
+        async with _client(app) as c:
+            r = await c.post(
+                "/api/test-connectivity",
+                content="not json",
+                headers={"Content-Type": "application/json", **_auth_headers(app)},
+            )
+        assert r.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_rejects_bad_payload(self, app):
+        async with _client(app) as c:
+            r = await c.post(
+                "/api/test-connectivity",
+                json={"name": "", "type": "stdio"},
+                headers=_auth_headers(app),
+            )
+        assert r.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_stdio_nonexistent_command(self, app):
+        async with _client(app) as c:
+            r = await c.post(
+                "/api/test-connectivity",
+                json={"name": "x", "type": "stdio", "command": "__nonexistent_cmd__"},
+                headers=_auth_headers(app),
+            )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["ok"] is False
+        assert "não encontrado" in body["detail"]
+
+
+# --- Export/Import config ---
+
+def _auth_headers(app):
+    """Extract auth headers from the app fixture if auth is configured."""
+    # app_auth fixture uses 'test-token-123'; app fixture uses None
+    return {}
+
+class TestConfigExportImport:
+    @pytest.mark.anyio
+    async def test_export_returns_json(self, app):
+        async with _client(app) as c:
+            r = await c.get("/api/config/export")
+        assert r.status_code == 200
+        data = r.json()
+        assert "backends" in data
+
+    @pytest.mark.anyio
+    async def test_export_requires_auth(self, app_auth):
+        async with _client(app_auth) as c:
+            r = await c.get("/api/config/export")
+        assert r.status_code == 401
+
+    @pytest.mark.anyio
+    async def test_import_valid_config(self, app, tmp_path):
+        import json
+        config_path = tmp_path / "test_config.json"
+        valid = {
+            "auth_token": None,
+            "max_payload_bytes": 1048576,
+            "health_check_interval_seconds": 30,
+            "backend_request_timeout_seconds": 30,
+            "auto_restart": True,
+            "max_restart_attempts": 3,
+            "session_ttl_seconds": 600,
+            "backends": [{
+                "name": "imported-backend",
+                "type": "stdio",
+                "command": "python",
+                "args": ["-c", "print()"],
+            }],
+        }
+        async with _client(app) as c:
+            r = await c.post("/api/config/import", json=valid)
+        assert r.status_code == 200
+        assert "Importado" in r.json()["detail"] or "importado" in r.json()["detail"].lower()
+
+    @pytest.mark.anyio
+    async def test_import_rejects_invalid_config(self, app):
+        async with _client(app) as c:
+            r = await c.post(
+                "/api/config/import",
+                json={"backends": []},  # missing required fields
+            )
+        assert r.status_code == 422
+
+    @pytest.mark.anyio
+    async def test_import_requires_auth(self, app_auth):
+        async with _client(app_auth) as c:
+            r = await c.post("/api/config/import", json={"backends": []})
+        assert r.status_code == 401
+

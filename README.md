@@ -1,8 +1,8 @@
-# McpSentinel (MCP Gateway)  
+# Sentinel (MCP Gateway)  
   
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
   
-Um único ponto de entrada para todos os seus servidores MCP. O McpSentinel  
+Um único ponto de entrada para todos os seus servidores MCP. O Sentinel  
 inicia, agrega e monitora vários backends MCP (locais e remotos) e os expõe  
 como se fossem um só — com um dashboard web para operar tudo pelo navegador.  
   
@@ -37,7 +37,7 @@ como se fossem um só — com um dashboard web para operar tudo pelo navegador.
 ## O que é  
   
 Clientes MCP (Claude Desktop, Cursor, agentes) normalmente falam com **um**  
-servidor por vez. O McpSentinel fica no meio: você lista seus backends num  
+servidor por vez. O Sentinel fica no meio: você lista seus backends num  
 arquivo de configuração, o Gateway sobe todos, e o cliente enxerga **um único  
 endpoint** (`POST /mcp`) com todas as tools, resources e prompts agregados.  
   
