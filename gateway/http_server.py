@@ -484,16 +484,7 @@ def _render_dashboard(
   <div id="sb-endpoint-wrapper"><span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span></div>
   <span id="totals-stat" style="display:none">Tools: {totals} &middot; Resources: {res_count} &middot; Prompts: {prompt_count}</span>
   <span id="gw-endpoint" style="display:none">{gw_endpoint_safe}</span>
-  <div class="sb-divider"></div>
-  <label class="sb-item switch" data-tooltip="Compacto">
-    <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
-    <input type="checkbox" id="density-toggle"><span class="sb-label">Compacto</span>
-  </label>
-  <label class="sb-item switch" data-tooltip="Read-only">
-    <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>
-    <input type="checkbox" id="readonly-toggle"><span class="sb-label">Read-only</span>
-  </label>
-  <div class="sb-divider"></div>
+
   <button id="export-snapshot" class="sb-item" title="Baixar snapshot JSON" data-tooltip="Snapshot">
     <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
     <span class="sb-label">Snapshot</span>
@@ -985,14 +976,7 @@ document.getElementById("backends-grid").addEventListener("click", async (ev) =>
   window.location.href = backendDetailUrl(name);
 }});
 
-// ---- Densidade (compacto/confortável), persiste entre reloads ----
-const densityToggle = document.getElementById("density-toggle");
-densityToggle.checked = localStorage.getItem("mcpgw_density") === "compact";
-document.body.classList.toggle("density-compact", densityToggle.checked);
-densityToggle.addEventListener("change", () => {{
-  document.body.classList.toggle("density-compact", densityToggle.checked);
-  localStorage.setItem("mcpgw_density", densityToggle.checked ? "compact" : "comfortable");
-}});
+
 
 // ---- Sair do MCP: encerra o processo do Gateway (graceful shutdown) ----
 document.getElementById("shutdown-gateway").addEventListener("click", async () => {{
@@ -1019,14 +1003,6 @@ function updateTabTitle(servers) {{
 refresh();  
 setInterval(refresh, 3000);  
   
-// ---- Somente leitura (persiste entre reloads) ----  
-const readonlyToggle = document.getElementById("readonly-toggle");  
-readonlyToggle.checked = localStorage.getItem("mcpgw_readonly") === "1";  
-document.body.classList.toggle("readonly-mode", readonlyToggle.checked);  
-readonlyToggle.addEventListener("change", () => {{  
-  document.body.classList.toggle("readonly-mode", readonlyToggle.checked);  
-  localStorage.setItem("mcpgw_readonly", readonlyToggle.checked ? "1" : "0");  
-}});  
   
 // ---- Exportar snapshot ----  
 document.getElementById("export-snapshot").addEventListener("click", async () => {{  
