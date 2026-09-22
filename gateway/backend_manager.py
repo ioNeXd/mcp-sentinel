@@ -31,7 +31,7 @@ from gateway.registries import PromptRegistry, ResourceRegistry, ToolRegistry
 logger = structlog.get_logger(__name__)
 
 BASE_BACKOFF_SECONDS = 1.0
-MAX_BACKOFF_SECONDS = 30.0
+MAX_BACKOFF_SECONDS = 300.0
 BACKOFF_MULTIPLIER = 2.0
 
 HEALTH_PING_TIMEOUT_SECONDS = 2.0

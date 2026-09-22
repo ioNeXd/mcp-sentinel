@@ -52,6 +52,7 @@ from gateway.errors import (
     BackendStateConflictError,
 )
 from gateway.log_stream import log_broadcaster
+from gateway.rate_limiter import RateLimiter
 from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_error
 from gateway.server import McpServer
 from gateway import __version__
@@ -67,6 +68,9 @@ from gateway.sessions import SESSION_HEADER, normalize_session_id  # noqa: E402
 logger = structlog.get_logger(__name__)
 
 APP_VERSION = __version__
+
+# Rate limiter para /api/logs/stream (10 conn/min por IP)
+_log_stream_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
 _BACKEND_NAME_RE = re.compile(BACKEND_NAME_PATTERN)
 """Regex compilado do padrão de nome de backend importado de ``gateway.config``
@@ -475,10 +479,8 @@ def _render_dashboard(
       <h4>Backup do config.json</h4>
       <div class="modal-actions" style="justify-content: flex-start;">
         <button type="button" id="download-backup" class="btn-secondary">Baixar backup</button>
-        <label class="btn-secondary" id="restore-label" style="cursor:pointer;">
-          Restaurar de um backup
-          <input type="file" id="restore-file" accept="application/json" style="display:none;">
-        </label>
+        <button type="button" id="restore-trigger" class="btn-secondary">Restaurar de um backup</button>
+        <input type="file" id="restore-file" accept="application/json" style="display:none;">
       </div>
       <p id="restore-error" class="error hidden"></p>
       <p id="restore-hint" class="hint">Restaurar substitui o config.json inteiro (backends inclusos) — valida antes de gravar. Reinicie o Gateway depois.</p>
@@ -942,6 +944,10 @@ document.getElementById("download-backup").addEventListener("click", async () =>
   }} finally {{
     btn.disabled = false;
   }}
+}});
+
+document.getElementById("restore-trigger").addEventListener("click", () => {{
+  document.getElementById("restore-file").click();
 }});
 
 document.getElementById("restore-file").addEventListener("change", async (ev) => {{
@@ -2484,7 +2490,9 @@ def create_app(
                 content={"detail": "shutdown não disponível neste processo"},
             )
         logger.warning("gateway_shutdown_requested_via_dashboard")
-        server.should_exit = True
+        # Dar tempo pra resposta HTTP sair antes do uvicorn parar.
+        # Sem isso, o client recebe ConnectionResetError no browser.
+        asyncio.get_event_loop().call_later(0.1, setattr, server, "should_exit", True)
         return JSONResponse(content={"detail": "Encerrando o Gateway…"})
 
     @app.get("/api/tools/size")
@@ -2526,6 +2534,15 @@ def create_app(
         if not _is_authorized(request, token_override=request.query_params.get("token")):
             logger.info("http_auth_rejected", route="/api/logs/stream")
             return _unauthorized()  # type: ignore[return-value]
+
+        # Rate limit por IP: 10 conn/min
+        client_ip = request.client.host if request.client else "unknown"
+        if not _log_stream_limiter.allow(client_ip):
+            logger.warning("log_stream_rate_limited", client_ip=client_ip)
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "rate limit excedido (10/min)"},
+            )
 
         try:
             queue, replay = await log_broadcaster.subscribe()
