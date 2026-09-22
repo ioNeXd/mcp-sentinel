@@ -65,18 +65,39 @@ async def test_main_shutdown_completo_sem_traceback(monkeypatch: pytest.MonkeyPa
     async def fake_serve(self: Any) -> None:  # pragma: no cover - ver _FakeUvicornServer  
         raise KeyboardInterrupt  
   
-    monkeypatch.setattr("uvicorn.Server", _FakeUvicornServer)  
-    monkeypatch.setattr(main_module, "_install_sigbreak_handler", lambda _server: None)  
-    monkeypatch.setenv("MCP_GATEWAY_PORT", "8197")  
-    monkeypatch.setenv("MCP_GATEWAY_CONFIG", "config/config.json")  
+    monkeypatch.setattr("uvicorn.Server", _FakeUvicornServer)
+    monkeypatch.setattr(main_module, "_install_sigbreak_handler", lambda _server: None)
+    # Config real tem backends que não existem neste ambiente de teste.
+    # Cria config temporário com um backend stdio que existe.
+    import json
+    import tempfile
+    tmp_config = Path(tempfile.mkstemp(suffix=".json", prefix="gw-test-")[1])
+    tmp_config.write_text(
+        json.dumps({
+            "backends": [{
+                "name": "test-backend",
+                "type": "stdio",
+                "command": sys.executable,
+                "args": ["-c", "import time; time.sleep(999)"],
+            }]
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MCP_GATEWAY_PORT", "8197")
+    monkeypatch.setenv("MCP_GATEWAY_CONFIG", str(tmp_config))
+    # Não inicia backends reais no teste — start_all vira no-op.
+    from unittest.mock import AsyncMock as _AM
+    monkeypatch.setattr("gateway.backend_manager.BackendManager.start_all", _AM())  
   
     stdout, stderr = io.StringIO(), io.StringIO()  
-    try:  
-        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):  
-            exit_code = await main_module.main()  
-    finally:  
-        # Restaura o baseline silencioso dos testes.  
-        configure_quiet_structlog()  
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            exit_code = await main_module.main()
+    finally:
+        # Restaura o baseline silencioso dos testes.
+        configure_quiet_structlog()
+        with contextlib.suppress(OSError):
+            tmp_config.unlink()  
   
     output = stdout.getvalue() + stderr.getvalue()  
     assert exit_code == 0  

@@ -255,8 +255,6 @@ class TestConfigExportImport:
 
     @pytest.mark.anyio
     async def test_import_valid_config(self, app, tmp_path):
-        import json
-        config_path = tmp_path / "test_config.json"
         valid = {
             "auth_token": None,
             "max_payload_bytes": 1048576,
