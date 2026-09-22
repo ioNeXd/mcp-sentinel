@@ -153,14 +153,15 @@ body {
   display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .6rem;
   border-radius: 999px; font-size: .72rem; font-weight: 600; border: 1px solid var(--border);
 }
-.pill .dot { width: .5rem; height: .5rem; border-radius: 50%; }
+.pill .dot { width: .65rem; height: .65rem; border-radius: 50%; }
 .pill-ok .dot { background: var(--ok); } .pill-ok { color: var(--ok); }
 .pill-degraded .dot { background: var(--warn); } .pill-degraded { color: var(--warn); }
-#sidebar .pill { font-size: .58rem; padding: .1rem .4rem; margin: .2rem auto; display: flex; justify-content: center; }
-#sidebar .pill .dot { width: .35rem; height: .35rem; }
-#sidebar .pill .pill-text { transition: opacity .15s; overflow: hidden; white-space: nowrap; }
-#sidebar:not(.collapsed) .pill { justify-content: flex-start; margin-left: .7rem; margin-right: .7rem; }
-#sidebar.collapsed .pill { justify-content: center; padding: .1rem; }
+#sidebar .pill { font-size: .78rem; padding: .35rem .9rem; margin: .3rem auto; display: flex; justify-content: center; align-items: center; gap: .45rem; width: fit-content; min-width: 10rem; border: 1px solid var(--border); border-radius: 999px; }
+#sidebar .pill .dot { width: .6rem; height: .6rem; flex-shrink: 0; }
+#sidebar .pill .pill-text { transition: opacity .15s; overflow: hidden; white-space: nowrap; text-transform: capitalize; }
+#sidebar:not(.collapsed) .pill { justify-content: center; margin-left: auto; margin-right: auto; }
+#sidebar.collapsed .pill { justify-content: center; padding: .25rem; min-width: 0; width: fit-content; }
+#sidebar.collapsed .pill .dot { width: .6rem; height: .6rem; }
 #sidebar.collapsed .pill .pill-text { display: none; }
 #sidebar .switch { display: flex; align-items: center; gap: .5rem; font-size: .78rem; color: var(--muted); }
 #sidebar .switch input { margin: 0; }
@@ -479,7 +480,7 @@ def _render_dashboard(
     <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M12 2 L3 7 L3 13 C3 18 7 22 12 23 C17 22 21 18 21 13 L21 7 Z"/></svg></span>
     <span class="sb-logo-text">Sentinel</span>
   </div>
-  <span id="status-pill" class="pill pill-{status_safe}"><span class="dot"></span><span class="pill-text">{status_safe}</span></span>
+  <span id="status-pill" class="pill pill-{status_safe}" title="Status do Gateway: {status_safe}. Running = todos os backends ok. Degraded = algum backend com problema. Offline = sem resposta."><span class="dot"></span><span class="pill-text">{status_safe}</span></span>
   <div id="sb-stats-wrapper"><span id="sb-stats">Tools: {totals} &middot; Res: {res_count} &middot; Prompts: {prompt_count}</span></div>
   <div id="sb-endpoint-wrapper"><span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span></div>
   <span id="totals-stat" style="display:none">Tools: {totals} &middot; Resources: {res_count} &middot; Prompts: {prompt_count}</span>
@@ -886,8 +887,10 @@ async function refresh() {{
     ]);  
     if (healthRes.ok) {{  
       const h = await healthRes.json();  
-      const pill = document.getElementById("status-pill");  
-      pill.className = "pill pill-" + h.status;  
+      const pill = document.getElementById("status-pill");
+      pill.className = "pill pill-" + h.status;
+      const descriptions = {{ running: 'Todos os backends respondendo normalmente.', degraded: 'Pelo menos um backend com problema ou lento.', offline: 'Gateway sem resposta ou desligado.' }};
+      pill.title = "Status: " + h.status + ". " + (descriptions[h.status] || "");
       pill.innerHTML = '<span class="dot"></span><span class="pill-text">' + h.status + '</span>';  
       document.getElementById("totals-stat").textContent =  
         `Tools: ${{h.tools_count}} · Resources: ${{h.resources_count}} · Prompts: ${{h.prompts_count}}`;  
