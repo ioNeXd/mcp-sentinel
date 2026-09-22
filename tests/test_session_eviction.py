@@ -5,7 +5,6 @@ os testes existentes cobriam TTL/purge/max_sessions indiretamente, mas não
 validavam a lógica de qual sessão é removida quando o teto é atingido.
 """
 
-import pytest
 
 from gateway.sessions import SessionFilter
 

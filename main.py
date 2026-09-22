@@ -93,7 +93,6 @@ async def _watch_config(
     Backends adicionados/removidos no config.json não são tratados aqui
     (requer restart) — só settings de runtime.
     """
-    import time
     from gateway.config import load_config
     last_mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
     logger.info("config_watcher_started", path=str(config_path))
