@@ -21,6 +21,7 @@ modo de janela nativa aqui.
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -78,6 +79,47 @@ def _install_sigbreak_handler(server: uvicorn.Server) -> None:
         server.should_exit = True
 
     signal.signal(signal.SIGBREAK, _handle_sigbreak)
+
+
+async def _watch_config(
+    config_path: Path,
+    backend_manager: BackendManager,
+    session_filter: SessionFilter,
+) -> None:
+    """Hot-reload: monitora mtime do config.json e aplica mudanças.
+
+    A cada 5s checa o mtime; se mudou, recarrega o arquivo e aplica
+    settings que podem mudar sem restart (auth_token, TTL, intervals).
+    Backends adicionados/removidos no config.json não são tratados aqui
+    (requer restart) — só settings de runtime.
+    """
+    import time
+    from gateway.config import load_config
+    last_mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
+    logger.info("config_watcher_started", path=str(config_path))
+    while True:
+        try:
+            await asyncio.sleep(5.0)
+            if not config_path.exists():
+                continue
+            current_mtime = config_path.stat().st_mtime
+            if current_mtime == last_mtime:
+                continue
+            last_mtime = current_mtime
+            new_config = load_config(config_path)
+            # Aplica settings de runtime (não toca em backends)
+            session_filter.ttl_seconds = new_config.session_ttl_seconds
+            session_filter.max_sessions = new_config.max_sessions
+            logger.info(
+                "config_reloaded",
+                path=str(config_path),
+                session_ttl=new_config.session_ttl_seconds,
+                max_sessions=new_config.max_sessions,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("config_watcher_error", error=str(exc))
 
 
 async def main() -> int:
@@ -151,6 +193,16 @@ async def main() -> int:
     session_purger = SessionPurger(session_filter)
     session_purger.start()
 
+    # Hot-reload: monitora mtime do config.json e recarrega quando muda.
+    config_watcher_task = asyncio.create_task(
+        _watch_config(
+            config_path=config_path,
+            backend_manager=backend_manager,
+            session_filter=session_filter,
+        ),
+        name="config-watcher",
+    )
+
     app = create_app(
         mcp_server,
         auth_token=config.auth_token,
@@ -190,6 +242,9 @@ async def main() -> int:
     except KeyboardInterrupt:
         logger.info("gateway_shutdown_interrupted", reason="KeyboardInterrupt")
     finally:
+        config_watcher_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await config_watcher_task
         await _graceful_shutdown(health_monitor, session_purger, mcp_server)
     return 0
 

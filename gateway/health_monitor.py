@@ -64,7 +64,7 @@ class HealthMonitor:
         logger.info("health_monitor_stopped")
 
     async def _run(self) -> None:
-        """Loop principal: checa todos os backends, dorme o intervalo, repete.
+        """Loop principal: self-check + backends, dorme o intervalo, repete.
 
         O primeiro ciclo roda imediatamente ao entrar no loop (check antes do
         sleep): um backend que nasceu morto é detectado/reiniciado no primeiro
@@ -75,12 +75,30 @@ class HealthMonitor:
         logger.info("health_monitor_started", interval_seconds=self.interval_seconds)
         while True:
             try:
+                await self._self_check()
                 await self.check_all()
                 await asyncio.sleep(self.interval_seconds)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.exception("health_monitor_loop_error")
+
+    async def _self_check(self) -> None:
+        """Auto-checagem: tenta processar uma mensagem vazia no McpServer.
+
+        Detecta deadlocks no event loop ou corrotinas travadas. Não é um
+        health check HTTP real (evita dependency circular com http_server),
+        mas provar que o event loop responde já é sinal de vida.
+        """
+        try:
+            await asyncio.wait_for(
+                self.manager.registries[0].list_all(),  # I/O mínimo
+                timeout=3.0,
+            )
+        except asyncio.TimeoutError:
+            logger.critical("gateway_self_check_timeout", detail="event loop possivelmente travado")
+        except Exception as exc:
+            logger.warning("gateway_self_check_error", error=str(exc))
 
     async def check_all(self) -> None:
         """Um ciclo completo: checa e tenta recuperar cada backend em paralelo.

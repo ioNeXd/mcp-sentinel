@@ -9,9 +9,13 @@ dentro da mesma task asyncio, sem precisar propagar o id manualmente.
 A cadeia de ``processors`` inclui ``broadcast_processor``
 (:mod:`gateway.log_stream`), que espelha cada evento para o console ao vivo do
 dashboard antes do renderer final, sem alterar o pipeline de log padrão.
+
+O modo JSON pode ser ativado via ``MCP_GATEWAY_LOG_FORMAT=json`` — útil em
+produção com ELK/Loki/Grafana onde cada linha é parseada como JSON.
 """
 
 import logging
+import os
 
 import structlog
 
@@ -22,14 +26,15 @@ def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
     """Configura o structlog (contextvars + nível) e o logging stdlib base.
 
     O ``ConsoleRenderer`` formata eventos legíveis no terminal local, enquanto
-    os logs de bibliotecas (uvicorn etc.) seguem pelo logging stdlib. O
-    parâmetro ``force`` é repassado a :func:`logging.basicConfig`:
-
-    - Modo biblioteca (``force=False``, padrão): não destrói uma configuração
-      de logging já existente no processo hospedeiro.
-    - Modo aplicação standalone (``force=True``): quem controla o processo
-      (ex.: ``main.py``) garante que a configuração do Gateway prevaleça.
+    ``MCP_GATEWAY_LOG_FORMAT=json`` ativa o ``JSONRenderer`` para produção
+    (ELK/Loki/Grafana). O ``broadcast_processor`` espelha tudo pro console
+    ao vivo do dashboard independente do renderer.
     """
+    log_format = os.environ.get("MCP_GATEWAY_LOG_FORMAT", "console").strip().lower()
+    if log_format == "json":
+        renderer: structlog.types.Processor = structlog.processors.JSONRenderer()
+    else:
+        renderer = structlog.dev.ConsoleRenderer()
     logging.basicConfig(level=level, format="%(message)s", force=force)
     structlog.configure(
         processors=[
@@ -37,7 +42,7 @@ def configure_logging(level: int = logging.INFO, force: bool = False) -> None:
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             broadcast_processor,
-            structlog.dev.ConsoleRenderer(),
+            renderer,
         ],
         wrapper_class=structlog.stdlib.BoundLogger,
         logger_factory=structlog.stdlib.LoggerFactory(),
