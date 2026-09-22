@@ -2527,7 +2527,14 @@ def create_app(
             logger.info("http_auth_rejected", route="/api/logs/stream")
             return _unauthorized()  # type: ignore[return-value]
 
-        queue, replay = await log_broadcaster.subscribe()
+        try:
+            queue, replay = await log_broadcaster.subscribe()
+        except RuntimeError as exc:
+            logger.warning("log_stream_subscriber_limit", error=str(exc))
+            return JSONResponse(
+                status_code=503,
+                content={"detail": str(exc)},
+            )
 
         async def event_source() -> Any:
             try:

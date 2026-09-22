@@ -29,6 +29,11 @@ REPLAY_BUFFER_SIZE = 200
 # descarta os eventos mais antigos em vez de crescer sem limite de memória.
 QUEUE_MAXSIZE = 1000
 
+# Limite total de assinantes simultâneos no console ao vivo.
+# Proteção contra DoS: cada subscriber consome ~32KB de refs;
+# 1000+ conexões = memory exhaustion. Ajustar conforme memória disponível.
+MAX_SUBSCRIBERS = 100
+
 
 class LogBroadcaster:
     """Publica eventos de log estruturado para assinantes SSE em tempo real."""
@@ -67,7 +72,15 @@ class LogBroadcaster:
             self._loop.call_soon_threadsafe(_offer, queue, line)
 
     async def subscribe(self) -> tuple[asyncio.Queue[str], list[str]]:
-        """Registra um novo assinante; devolve a fila e o replay recente."""
+        """Registra um novo assinante; devolve a fila e o replay recente.
+
+        Raises:
+            RuntimeError: se o limite de subscribers simultâneos foi atingido.
+        """
+        if len(self._subscribers) >= MAX_SUBSCRIBERS:
+            raise RuntimeError(
+                f"limite de {MAX_SUBSCRIBERS} conexões de log simultâneas atingido"
+            )
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
         self._subscribers.add(queue)
         return queue, list(self._replay)
