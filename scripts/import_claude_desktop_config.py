@@ -285,11 +285,14 @@ def import_config(source_path: Path, prefix: str = "") -> tuple[dict[str, Any], 
             )
             continue
         used_names.add(clean)
-
         backend, entry_warnings = convert_entry(clean, entry)
         warnings.extend(entry_warnings)
         if backend is not None:
             backends.append(backend)
+        else:
+            # entrada falhou a conversão — libera o nome pra uma eventual
+            # entrada posterior com o mesmo nome sanitizado.
+            used_names.discard(clean)
 
     gateway_config: dict[str, Any] = {"backends": backends}
     if not backends:
