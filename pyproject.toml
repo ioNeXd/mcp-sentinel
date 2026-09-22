@@ -12,7 +12,7 @@ line-length = 100
 exclude = [".venv", ".pytest_cache"]  
   
 [tool.ruff.lint]  
-select = ["E", "F"]  
+select = ["E", "F", "W"]  
 ignore = ["E501"]  
   
 [tool.mypy]  

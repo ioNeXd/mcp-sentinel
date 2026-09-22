@@ -13,7 +13,7 @@ from gateway.errors import (
     BackendStateConflictError,
     BackendTimeoutError,
 )
-from gateway.models import (INTERNAL_ERROR, METHOD_NOT_FOUND, PROTOCOL_VERSION)
+from gateway.models import INTERNAL_ERROR, METHOD_NOT_FOUND, PROTOCOL_VERSION
 
 JSON_CONTENT_TYPE = "application/json"
 SSE_MEDIA_TYPE = "text/event-stream"

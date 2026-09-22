@@ -671,9 +671,7 @@ class McpServer:
         # espelha a resposta real — a chave em per_backend usa o próprio nome
         # da tool, separada de qualquer backend.
         per_backend: dict[str, int] = {
-            DIAGNOSTIC_TOOL_NAME: len(
-                json.dumps(DIAGNOSTIC_TOOL_PAYLOAD, ensure_ascii=False)
-            )
+            DIAGNOSTIC_TOOL_NAME: len(json.dumps(DIAGNOSTIC_TOOL_PAYLOAD, ensure_ascii=False))
         }
         for entry, payload in pairs:
             per_backend[entry.backend] = per_backend.get(entry.backend, 0) + len(

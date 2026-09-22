@@ -35,7 +35,7 @@ class RateLimiter:
         self._windows: dict[str, deque[float]] = defaultdict(deque)
 
     def allow(self, key: str) -> bool:
-        """ Retorna ``True`` se o request é permitido, ``False`` se excedeu o limite. """
+        """Retorna ``True`` se o request é permitido, ``False`` se excedeu o limite."""
         now = self._clock()
         window = self._windows[key]
         cutoff = now - self.window_seconds

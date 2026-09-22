@@ -54,6 +54,7 @@ def app_auth():
 def _client(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
+
 def _auth_headers(token: str = "test-token-123") -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
@@ -162,6 +163,7 @@ class TestShutdown:
 class TestRateLimit:
     def test_rate_limiter_allows_within_window(self):
         from gateway.rate_limiter import RateLimiter
+
         rl = RateLimiter(max_requests=3, window_seconds=60)
         assert rl.allow("a") is True
         assert rl.allow("a") is True
@@ -170,6 +172,7 @@ class TestRateLimit:
 
     def test_rate_limiter_separate_keys(self):
         from gateway.rate_limiter import RateLimiter
+
         rl = RateLimiter(max_requests=1, window_seconds=60)
         assert rl.allow("a") is True
         assert rl.allow("b") is True
@@ -178,10 +181,12 @@ class TestRateLimit:
 
 # --- Backup automático ---
 
+
 class TestAutoBackup:
     def test_backup_created_before_write(self, tmp_path):
         import json
         from gateway.http_server import _backup_config
+
         config = tmp_path / "config.json"
         config.write_text(json.dumps({"backends": []}), encoding="utf-8")
         _backup_config(str(config))
@@ -191,10 +196,12 @@ class TestAutoBackup:
 
     def test_backup_no_crash_on_missing_file(self, tmp_path):
         from gateway.http_server import _backup_config
+
         _backup_config(str(tmp_path / "nonexistent.json"))  # should not raise
 
 
 # --- Teste de conectividade ---
+
 
 class TestConnectivity:
     @pytest.mark.anyio
@@ -233,10 +240,12 @@ class TestConnectivity:
 
 # --- Export/Import config ---
 
+
 def _auth_headers(app):
     """Extract auth headers from the app fixture if auth is configured."""
     # app_auth fixture uses 'test-token-123'; app fixture uses None
     return {}
+
 
 class TestConfigExportImport:
     @pytest.mark.anyio
@@ -263,12 +272,14 @@ class TestConfigExportImport:
             "auto_restart": True,
             "max_restart_attempts": 3,
             "session_ttl_seconds": 600,
-            "backends": [{
-                "name": "imported-backend",
-                "type": "stdio",
-                "command": "python",
-                "args": ["-c", "print()"],
-            }],
+            "backends": [
+                {
+                    "name": "imported-backend",
+                    "type": "stdio",
+                    "command": "python",
+                    "args": ["-c", "print()"],
+                }
+            ],
         }
         async with _client(app) as c:
             r = await c.post("/api/config/import", json=valid)
@@ -289,4 +300,3 @@ class TestConfigExportImport:
         async with _client(app_auth) as c:
             r = await c.post("/api/config/import", json={"backends": []})
         assert r.status_code == 401
-

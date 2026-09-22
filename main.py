@@ -94,6 +94,7 @@ async def _watch_config(
     (requer restart) — só settings de runtime.
     """
     from gateway.config import load_config
+
     last_mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
     logger.info("config_watcher_started", path=str(config_path))
     while True:
@@ -168,7 +169,7 @@ async def main() -> int:
                 "auth_token definido mas servidor exposto sem HTTPS — tokens em query string "
                 "(?token=) vazam em logs de proxy e histórico de navegador. Use TLS ou restrinja "
                 "a 127.0.0.1 para uso local seguro.",
-                host=host
+                host=host,
             )
 
     registries = (ToolRegistry(), ResourceRegistry(), PromptRegistry())

@@ -59,7 +59,7 @@ from gateway.models import INVALID_REQUEST, INTERNAL_ERROR, PARSE_ERROR, make_er
 from gateway.server import McpServer
 from gateway import __version__
 
-from contextlib import asynccontextmanager  
+from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
 
 # Reexporta o header de sessão do filtro seletivo (Fase 5) definido em
@@ -200,86 +200,86 @@ body.sidebar-collapsed main { padding-left: var(--sb-collapsed); }
   main { padding-left: 1rem !important; padding-top: 3rem; }
 }
 
-h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .04em;  
-  color: var(--muted); margin: 1.75rem 0 .75rem; }  
-#backends-grid {  
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));  
-  gap: .8rem;  
-}  
-.card {  
-  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;  
-  padding: .9rem 1rem;  
-}  
-.card-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }  
-.card-head .name { font-weight: 600; }  
-.badge {  
-  font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;  
-  padding: .12rem .5rem; border-radius: .3rem;  
-}  
-.badge-running { background: rgba(52,199,123,.15); color: var(--ok); }  
-.badge-offline, .badge-failed { background: rgba(224,90,90,.15); color: var(--err); }  
-.badge-restarting { background: rgba(224,166,58,.15); color: var(--warn); }  
-.badge-disabled { background: rgba(107,114,132,.2); color: var(--off); }  
-.card .meta { color: var(--muted); font-size: .78rem; margin-top: .3rem; word-break: break-all; }  
-.card .counts { display: flex; gap: .9rem; margin-top: .6rem; font-size: .8rem; }  
-.card .counts b { color: var(--text); }  
-.card .actions { display: flex; gap: .4rem; margin-top: .8rem; }  
-button.act {  
-  flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);  
-  padding: .35rem .5rem; border-radius: .4rem; font-size: .76rem; cursor: pointer;  
-}  
+h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--muted); margin: 1.75rem 0 .75rem; }
+#backends-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: .8rem;
+}
+.card {
+  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;
+  padding: .9rem 1rem;
+}
+.card-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.card-head .name { font-weight: 600; }
+.badge {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+  padding: .12rem .5rem; border-radius: .3rem;
+}
+.badge-running { background: rgba(52,199,123,.15); color: var(--ok); }
+.badge-offline, .badge-failed { background: rgba(224,90,90,.15); color: var(--err); }
+.badge-restarting { background: rgba(224,166,58,.15); color: var(--warn); }
+.badge-disabled { background: rgba(107,114,132,.2); color: var(--off); }
+.card .meta { color: var(--muted); font-size: .78rem; margin-top: .3rem; word-break: break-all; }
+.card .counts { display: flex; gap: .9rem; margin-top: .6rem; font-size: .8rem; }
+.card .counts b { color: var(--text); }
+.card .actions { display: flex; gap: .4rem; margin-top: .8rem; }
+button.act {
+  flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: .35rem .5rem; border-radius: .4rem; font-size: .76rem; cursor: pointer;
+}
 button.act:hover { border-color: var(--accent); }
 button.act:disabled { opacity: .4; cursor: not-allowed; }
 
-#console-wrap {  
-  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;  
-  overflow: hidden;  
-}  
-#console-toolbar {  
-  display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem;  
-  border-bottom: 1px solid var(--border); font-size: .8rem; color: var(--muted);  
+#console-wrap {
+  background: var(--panel); border: 1px solid var(--border); border-radius: .6rem;
+  overflow: hidden;
+}
+#console-toolbar {
+  display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem;
+  border-bottom: 1px solid var(--border); font-size: .8rem; color: var(--muted);
   flex-wrap: wrap;
-}  
-#console-toolbar .grow { flex: 1; }  
-#console-toolbar button {  
-  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);  
-  padding: .25rem .6rem; border-radius: .35rem; font-size: .76rem; cursor: pointer;  
-}  
-#console {  
-  height: 20rem; overflow-y: auto; padding: .6rem .8rem; font-size: .78rem;  
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;  
-  white-space: pre-wrap; word-break: break-all;  
-}  
-#console .line { padding: .06rem 0; }  
-#console .lvl-error, #console .lvl-critical { color: var(--err); }  
-#console .lvl-warning { color: var(--warn); }  
-#console .lvl-info { color: var(--text); }  
-#console .lvl-debug { color: var(--muted); }  
-#console .ts { color: var(--muted); margin-right: .5rem; }  
-.empty { color: var(--muted); font-size: .82rem; padding: .5rem 0; }  
-.grow { flex: 1; }  
-.btn-primary {  
-  background: var(--accent); border: 1px solid var(--accent); color: #fff;  
-  padding: .4rem .8rem; border-radius: .4rem; font-size: .82rem; font-weight: 600;  
-  cursor: pointer;  
-}  
-.btn-primary:hover { filter: brightness(1.1); }  
-.overlay {  
-  position: fixed; inset: 0; background: rgba(0,0,0,.55);  
-  display: flex; align-items: center; justify-content: center; z-index: 20;  
-}  
-.overlay.hidden { display: none; }  
-.modal {  
-  background: var(--panel); border: 1px solid var(--border); border-radius: .7rem;  
-  width: 26rem; max-width: 92vw; max-height: 88vh; overflow-y: auto;  
-  padding: 1rem 1.2rem 1.2rem;  
-}  
-.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; }  
-.modal-head h3 { margin: 0; font-size: 1rem; }  
-.btn-icon {  
-  background: none; border: none; color: var(--muted); font-size: 1.3rem;  
-  cursor: pointer; line-height: 1;  
-}  
+}
+#console-toolbar .grow { flex: 1; }
+#console-toolbar button {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: .25rem .6rem; border-radius: .35rem; font-size: .76rem; cursor: pointer;
+}
+#console {
+  height: 20rem; overflow-y: auto; padding: .6rem .8rem; font-size: .78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all;
+}
+#console .line { padding: .06rem 0; }
+#console .lvl-error, #console .lvl-critical { color: var(--err); }
+#console .lvl-warning { color: var(--warn); }
+#console .lvl-info { color: var(--text); }
+#console .lvl-debug { color: var(--muted); }
+#console .ts { color: var(--muted); margin-right: .5rem; }
+.empty { color: var(--muted); font-size: .82rem; padding: .5rem 0; }
+.grow { flex: 1; }
+.btn-primary {
+  background: var(--accent); border: 1px solid var(--accent); color: #fff;
+  padding: .4rem .8rem; border-radius: .4rem; font-size: .82rem; font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { filter: brightness(1.1); }
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 20;
+}
+.overlay.hidden { display: none; }
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: .7rem;
+  width: 26rem; max-width: 92vw; max-height: 88vh; overflow-y: auto;
+  padding: 1rem 1.2rem 1.2rem;
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: .4rem; }
+.modal-head h3 { margin: 0; font-size: 1rem; }
+.btn-icon {
+  background: none; border: none; color: var(--muted); font-size: 1.3rem;
+  cursor: pointer; line-height: 1;
+}
 .modal label {
   display: block; font-size: .8rem; color: var(--muted); margin-top: .7rem;
 }
@@ -288,20 +288,20 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
   color: var(--text); border-radius: .35rem; padding: .4rem .5rem; font-size: .85rem;
   font-family: inherit;
 }
-.modal textarea { font-family: ui-monospace, monospace; resize: vertical; }  
-.type-fields.hidden { display: none; }  
-.hint { color: var(--muted); font-size: .74rem; margin-top: .8rem; }  
-.error { color: var(--err); font-size: .78rem; margin-top: .5rem; }  
-.error.hidden { display: none; }  
-.modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }  
-.modal-actions button { padding: .4rem .9rem; border-radius: .4rem; font-size: .82rem; cursor: pointer; }  
+.modal textarea { font-family: ui-monospace, monospace; resize: vertical; }
+.type-fields.hidden { display: none; }
+.hint { color: var(--muted); font-size: .74rem; margin-top: .8rem; }
+.error { color: var(--err); font-size: .78rem; margin-top: .5rem; }
+.error.hidden { display: none; }
+.modal-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1rem; }
+.modal-actions button { padding: .4rem .9rem; border-radius: .4rem; font-size: .82rem; cursor: pointer; }
 #cancel-add-mcp { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
 .checkbox-label { display: flex !important; align-items: center; gap: .5rem; flex-direction: row-reverse; justify-content: flex-end; }
 .checkbox-label input { width: auto; margin: 0; }
 .settings-divider { border-top: 1px solid var(--border); margin: 1.1rem 0; }
 #backup-restore h4 { font-size: .82rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 0 0 .6rem; }
-#cancel-settings { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }  
-  
+#cancel-settings { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+
 .conn-banner {
   background: var(--err); color: #fff; text-align: center; font-size: .85rem;
   padding: .45rem; font-weight: 600;
@@ -465,12 +465,12 @@ def _render_dashboard(
     cards_html = _render_backend_cards(servers)
     token_js = json.dumps(token)
     gw_endpoint_safe = html.escape(gw_endpoint)
-    return f"""<!DOCTYPE html>  
-<html lang="pt-BR">  
-<head>  
-<meta charset="utf-8">  
-<meta name="viewport" content="width=device-width, initial-scale=1">  
-<title>Sentinel — Dashboard</title>  
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel — Dashboard</title>
 <style>{_DASHBOARD_STYLE}</style>
 </head>
 <body>
@@ -549,48 +549,48 @@ def _render_dashboard(
     <div id="console"><div class="empty">Aguardando eventos…</div></div>
   </div>
 </main>
-<div id="toast-container"></div>  
-  
-  
-<div id="add-mcp-overlay" class="overlay hidden">  
-  <div class="modal">  
-    <div class="modal-head">  
-      <h3>Adicionar MCP</h3>  
-      <button id="close-add-mcp" class="btn-icon">&times;</button>  
-    </div>  
-    <form id="add-mcp-form">  
-      <label>Nome  
-        <input type="text" name="name" required placeholder="ex: meu-backend" pattern="[A-Za-z0-9_-]+">  
-      </label>  
-      <label>Tipo  
-        <select name="type" id="add-mcp-type">  
-          <option value="stdio">stdio (comando local)</option>  
-          <option value="http">http</option>  
-          <option value="sse">sse</option>  
-        </select>  
-      </label>  
-      <div id="fields-stdio" class="type-fields">  
-        <label>Comando  
-          <input type="text" name="command" placeholder="ex: python">  
-        </label>  
-        <label>Argumentos (um por linha)  
-          <textarea name="args" rows="3" placeholder="tests/fake_backend.py"></textarea>  
-        </label>  
-      </div>  
-      <div id="fields-net" class="type-fields hidden">  
-        <label>URL  
-          <input type="text" name="url" placeholder="http://127.0.0.1:9000">  
-        </label>  
-      </div>  
-      <p id="add-mcp-hint" class="hint">Salva no config.json e já tenta subir o backend na hora.</p>  
-      <p id="add-mcp-error" class="error hidden"></p>  
+<div id="toast-container"></div>
+
+
+<div id="add-mcp-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>Adicionar MCP</h3>
+      <button id="close-add-mcp" class="btn-icon">&times;</button>
+    </div>
+    <form id="add-mcp-form">
+      <label>Nome
+        <input type="text" name="name" required placeholder="ex: meu-backend" pattern="[A-Za-z0-9_-]+">
+      </label>
+      <label>Tipo
+        <select name="type" id="add-mcp-type">
+          <option value="stdio">stdio (comando local)</option>
+          <option value="http">http</option>
+          <option value="sse">sse</option>
+        </select>
+      </label>
+      <div id="fields-stdio" class="type-fields">
+        <label>Comando
+          <input type="text" name="command" placeholder="ex: python">
+        </label>
+        <label>Argumentos (um por linha)
+          <textarea name="args" rows="3" placeholder="tests/fake_backend.py"></textarea>
+        </label>
+      </div>
+      <div id="fields-net" class="type-fields hidden">
+        <label>URL
+          <input type="text" name="url" placeholder="http://127.0.0.1:9000">
+        </label>
+      </div>
+      <p id="add-mcp-hint" class="hint">Salva no config.json e já tenta subir o backend na hora.</p>
+      <p id="add-mcp-error" class="error hidden"></p>
       <div id="test-connectivity-result" class="hint hidden"></div>
-      <div class="modal-actions">  
-        <button type="button" id="cancel-add-mcp">Cancelar</button>  
-        <button type="button" id="test-connectivity" class="btn-secondary">Testar</button>  
-        <button type="submit" id="submit-add-mcp" class="btn-primary">Adicionar</button>  
-      </div>  
-    </form>  
+      <div class="modal-actions">
+        <button type="button" id="cancel-add-mcp">Cancelar</button>
+        <button type="button" id="test-connectivity" class="btn-secondary">Testar</button>
+        <button type="submit" id="submit-add-mcp" class="btn-primary">Adicionar</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -667,9 +667,9 @@ def _render_dashboard(
   </div>
 </div>
 
-<script>  
-const GW_TOKEN = {token_js};  
-const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};  
+<script>
+const GW_TOKEN = {token_js};
+const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};
 
 // ---- Sidebar toggle (expand/collapse) ----
 const sbEl = document.getElementById("sidebar");
@@ -722,54 +722,54 @@ sbEl.addEventListener("touchend", (e) => {{
 // sem escape, o refresh dos cards despejaria tudo cru no innerHTML
 // (DOM XSS acionável por quem influencia o config: arquivo editado à mão,
 // importação do Claude Desktop, restore de backup).
-function escapeHtml(v) {{  
-  return String(v).replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));  
-}}  
-  
-function fmtMeta(s) {{  
-  const bits = [];  
-  if (s.type) bits.push(s.type);  
-  if (s.url) bits.push(s.url);  
-  if (s.command) bits.push((s.command + " " + (s.args || []).join(" ")).trim());  
-  return escapeHtml(bits.join(" · "));  
-}}  
-  
-// last_restart_at do servidor é um timestamp MONOTÔNICO (não é hora real) —  
-// não dá pra converter direto em data. Em vez disso, guardamos QUANDO (hora  
-// real local) vimos esse valor mudar pela primeira vez, e humanizamos a  
-// partir daí. Funciona enquanto o dashboard ficou aberto desde o restart;  
-// se a página abriu depois, mostra "recente" na primeira vez que aparece.  
-// Chaves obsoletas são podadas a cada refresh (pruneRestartSeenAt).  
-const restartSeenAt = {{}};  
-function humanizeRestart(name, lastRestartAt) {{  
-  if (lastRestartAt === null || lastRestartAt === undefined) return null;  
-  const key = name + ":" + lastRestartAt;  
-  if (!(key in restartSeenAt)) restartSeenAt[key] = Date.now();  
-  const elapsedMs = Date.now() - restartSeenAt[key];  
-  const s = Math.floor(elapsedMs / 1000);  
-  if (s < 5) return "agora mesmo";  
-  if (s < 60) return `há ${{s}}s`;  
-  const m = Math.floor(s / 60);  
-  if (m < 60) return `há ${{m}}min`;  
-  const h = Math.floor(m / 60);  
-  return `há ${{h}}h`;  
-}}  
-  
+function escapeHtml(v) {{
+  return String(v).replace(/[&<>"']/g, c => ({{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}}[c]));
+}}
+
+function fmtMeta(s) {{
+  const bits = [];
+  if (s.type) bits.push(s.type);
+  if (s.url) bits.push(s.url);
+  if (s.command) bits.push((s.command + " " + (s.args || []).join(" ")).trim());
+  return escapeHtml(bits.join(" · "));
+}}
+
+// last_restart_at do servidor é um timestamp MONOTÔNICO (não é hora real) —
+// não dá pra converter direto em data. Em vez disso, guardamos QUANDO (hora
+// real local) vimos esse valor mudar pela primeira vez, e humanizamos a
+// partir daí. Funciona enquanto o dashboard ficou aberto desde o restart;
+// se a página abriu depois, mostra "recente" na primeira vez que aparece.
+// Chaves obsoletas são podadas a cada refresh (pruneRestartSeenAt).
+const restartSeenAt = {{}};
+function humanizeRestart(name, lastRestartAt) {{
+  if (lastRestartAt === null || lastRestartAt === undefined) return null;
+  const key = name + ":" + lastRestartAt;
+  if (!(key in restartSeenAt)) restartSeenAt[key] = Date.now();
+  const elapsedMs = Date.now() - restartSeenAt[key];
+  const s = Math.floor(elapsedMs / 1000);
+  if (s < 5) return "agora mesmo";
+  if (s < 60) return `há ${{s}}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `há ${{m}}min`;
+  const h = Math.floor(m / 60);
+  return `há ${{h}}h`;
+}}
+
 // Poda do restartSeenAt: só a entrada do timestamp ATUAL de cada backend
 // interessa. Quando um backend troca de timestamp (restart novo) ou some da
 // resposta (removido), as chaves antigas viram lixo inacessível — sem esta
 // poda, o dicionário cresceria sem limite numa aba aberta por muito tempo
 // com muitos restarts.
-function pruneRestartSeenAt(servers) {{  
-  const live = new Set();  
-  for (const s of servers) {{  
-    if (s.last_restart_at !== null && s.last_restart_at !== undefined) live.add(s.name + ":" + s.last_restart_at);  
-  }}  
-  for (const key of Object.keys(restartSeenAt)) {{  
-    if (!live.has(key)) delete restartSeenAt[key];  
-  }}  
-}}  
-  
+function pruneRestartSeenAt(servers) {{
+  const live = new Set();
+  for (const s of servers) {{
+    if (s.last_restart_at !== null && s.last_restart_at !== undefined) live.add(s.name + ":" + s.last_restart_at);
+  }}
+  for (const key of Object.keys(restartSeenAt)) {{
+    if (!live.has(key)) delete restartSeenAt[key];
+  }}
+}}
+
 // ---- Favoritos/fixados (localStorage) ----
 function loadPinned() {{
   try {{ return new Set(JSON.parse(localStorage.getItem("mcpgw_pinned") || "[]")); }}
@@ -841,75 +841,75 @@ function renderGrid(servers) {{
     html += items.map(renderCard).join("");
   }}
   grid.innerHTML = html;
-}}  
-  
-// ---- Toasts de mudança de estado ----  
-const toastContainer = document.getElementById("toast-container");  
-function showToast(msg, kind) {{  
-  const el = document.createElement("div");  
-  el.className = "toast" + (kind ? " toast-" + kind : "");  
-  el.textContent = msg;  
-  toastContainer.appendChild(el);  
-  requestAnimationFrame(() => el.classList.add("show"));  
-  setTimeout(() => {{  
-    el.classList.remove("show");  
-    setTimeout(() => el.remove(), 250);  
-  }}, 4500);  
-}}  
-let previousStatuses = null;  // null = ainda não teve o primeiro fetch bem-sucedido  
-function diffAndToast(servers) {{  
-  const current = {{}};  
-  for (const s of servers) current[s.name] = (s.status || "").toLowerCase();  
-  if (previousStatuses !== null) {{  
-    for (const [name, status] of Object.entries(current)) {{  
-      const before = previousStatuses[name];  
-      if (before !== undefined && before !== status) {{  
-        const kind = status === "running" ? "ok" : (status === "failed" ? "err" : "warn");  
-        showToast(`${{name}}: ${{before}} → ${{status}}`, kind);  
-      }}  
-    }}  
-  }}  
-  previousStatuses = current;  
-}}  
-  
-// ---- Banner de conexão perdida ----  
-const connBanner = document.getElementById("conn-banner");  
-let fetchFailStreak = 0;  
-let sseDown = false;  
-function updateConnBanner() {{  
-  connBanner.classList.toggle("hidden", !(fetchFailStreak >= 2 || sseDown));  
-}}  
-  
-async function refresh() {{  
-  try {{  
-    const [healthRes, serversRes] = await Promise.all([  
-      fetch("/health"),  
-      fetch("/api/servers", {{ headers: AUTH_HEADERS }}),  
-    ]);  
-    if (healthRes.ok) {{  
-      const h = await healthRes.json();  
+}}
+
+// ---- Toasts de mudança de estado ----
+const toastContainer = document.getElementById("toast-container");
+function showToast(msg, kind) {{
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " toast-" + kind : "");
+  el.textContent = msg;
+  toastContainer.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("show"));
+  setTimeout(() => {{
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 250);
+  }}, 4500);
+}}
+let previousStatuses = null;  // null = ainda não teve o primeiro fetch bem-sucedido
+function diffAndToast(servers) {{
+  const current = {{}};
+  for (const s of servers) current[s.name] = (s.status || "").toLowerCase();
+  if (previousStatuses !== null) {{
+    for (const [name, status] of Object.entries(current)) {{
+      const before = previousStatuses[name];
+      if (before !== undefined && before !== status) {{
+        const kind = status === "running" ? "ok" : (status === "failed" ? "err" : "warn");
+        showToast(`${{name}}: ${{before}} → ${{status}}`, kind);
+      }}
+    }}
+  }}
+  previousStatuses = current;
+}}
+
+// ---- Banner de conexão perdida ----
+const connBanner = document.getElementById("conn-banner");
+let fetchFailStreak = 0;
+let sseDown = false;
+function updateConnBanner() {{
+  connBanner.classList.toggle("hidden", !(fetchFailStreak >= 2 || sseDown));
+}}
+
+async function refresh() {{
+  try {{
+    const [healthRes, serversRes] = await Promise.all([
+      fetch("/health"),
+      fetch("/api/servers", {{ headers: AUTH_HEADERS }}),
+    ]);
+    if (healthRes.ok) {{
+      const h = await healthRes.json();
       const pill = document.getElementById("status-pill");
       pill.className = "pill pill-" + h.status;
       const descriptions = {{ running: 'Todos os backends respondendo normalmente.', degraded: 'Pelo menos um backend com problema ou lento.', offline: 'Gateway sem resposta ou desligado.' }};
       pill.title = "Status: " + h.status + ". " + (descriptions[h.status] || "");
-      pill.innerHTML = '<span class="dot"></span><span class="pill-text">' + h.status + '</span>';  
-      document.getElementById("totals-stat").textContent =  
-        `Tools: ${{h.tools_count}} · Resources: ${{h.resources_count}} · Prompts: ${{h.prompts_count}}`;  
-    }}  
+      pill.innerHTML = '<span class="dot"></span><span class="pill-text">' + h.status + '</span>';
+      document.getElementById("totals-stat").textContent =
+        `Tools: ${{h.tools_count}} · Resources: ${{h.resources_count}} · Prompts: ${{h.prompts_count}}`;
+    }}
     if (serversRes.ok) {{
       const data = await serversRes.json();
       diffAndToast(data.servers || []);
       renderGrid(data.servers || []);
       updateTabTitle(data.servers || []);
-    }}  
-    fetchFailStreak = 0;  
-  }} catch (e) {{  
-    fetchFailStreak++;  
-  }} finally {{  
-    updateConnBanner();  
-  }}  
-}}  
-  
+    }}
+    fetchFailStreak = 0;
+  }} catch (e) {{
+    fetchFailStreak++;
+  }} finally {{
+    updateConnBanner();
+  }}
+}}
+
 function backendDetailUrl(name) {{
   return `/backend/${{encodeURIComponent(name)}}` + (GW_TOKEN ? "?token=" + encodeURIComponent(GW_TOKEN) : "");
 }}
@@ -1004,41 +1004,41 @@ function updateTabTitle(servers) {{
   document.title = bad > 0 ? `⚠ ${{bad}} com problema — Sentinel` : "Sentinel — Dashboard";
 }}
 
-  
-refresh();  
-setInterval(refresh, 3000);  
-  
-  
-// ---- Exportar snapshot ----  
-document.getElementById("export-snapshot").addEventListener("click", async () => {{  
-  const btn = document.getElementById("export-snapshot");  
-  btn.disabled = true;  
-  try {{  
-    const [health, servers, toolsSize] = await Promise.all([  
-      fetch("/health").then(r => r.json()).catch(() => null),  
-      fetch("/api/servers", {{ headers: AUTH_HEADERS }}).then(r => r.json()).catch(() => null),  
-      fetch("/api/tools/size", {{ headers: AUTH_HEADERS }}).then(r => r.json()).catch(() => null),  
-    ]);  
-    const snapshot = {{ captured_at: new Date().toISOString(), health, servers, tools_size: toolsSize }};  
-    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {{ type: "application/json" }});  
-    const url = URL.createObjectURL(blob);  
-    const a = document.createElement("a");  
-    a.href = url;  
-    a.download = `mcp-gateway-snapshot-${{Date.now()}}.json`;  
-    a.click();  
-    URL.revokeObjectURL(url);  
-  }} finally {{  
-    btn.disabled = false;  
-  }}  
+
+refresh();
+setInterval(refresh, 3000);
+
+
+// ---- Exportar snapshot ----
+document.getElementById("export-snapshot").addEventListener("click", async () => {{
+  const btn = document.getElementById("export-snapshot");
+  btn.disabled = true;
+  try {{
+    const [health, servers, toolsSize] = await Promise.all([
+      fetch("/health").then(r => r.json()).catch(() => null),
+      fetch("/api/servers", {{ headers: AUTH_HEADERS }}).then(r => r.json()).catch(() => null),
+      fetch("/api/tools/size", {{ headers: AUTH_HEADERS }}).then(r => r.json()).catch(() => null),
+    ]);
+    const snapshot = {{ captured_at: new Date().toISOString(), health, servers, tools_size: toolsSize }};
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], {{ type: "application/json" }});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `mcp-gateway-snapshot-${{Date.now()}}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }} finally {{
+    btn.disabled = false;
+  }}
 }});
 
-// ---- Atalhos de teclado ----  
-document.addEventListener("keydown", (ev) => {{  
-  const tag = document.activeElement ? document.activeElement.tagName : "";  
-  if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;  
-  if (ev.key === "r") {{ refresh(); }}  
-  else if (ev.key === "/") {{ ev.preventDefault(); document.getElementById("console-search").focus(); }}  
-}});  
+// ---- Atalhos de teclado ----
+document.addEventListener("keydown", (ev) => {{
+  const tag = document.activeElement ? document.activeElement.tagName : "";
+  if (["INPUT", "TEXTAREA", "SELECT"].includes(tag)) return;
+  if (ev.key === "r") {{ refresh(); }}
+  else if (ev.key === "/") {{ ev.preventDefault(); document.getElementById("console-search").focus(); }}
+}});
 
 // ---- Modal "Configurações" ----
 const settingsOverlay = document.getElementById("settings-overlay");
@@ -1290,56 +1290,56 @@ importClaudeForm.addEventListener("submit", async (ev) => {{
   }}
 }});
 
-  
-  
-// ---- Console de logs ao vivo (SSE) ----  
-const consoleEl = document.getElementById("console");  
-const statusEl = document.getElementById("console-status");  
-const pauseBtn = document.getElementById("console-pause");  
-const clearBtn = document.getElementById("console-clear");  
-const levelSelect = document.getElementById("console-level");  
-const searchInput = document.getElementById("console-search");  
-const clearFilterBtn = document.getElementById("console-clear-filter");  
-const errorRateEl = document.getElementById("error-rate");  
-const MAX_LINES = 500;  
-let paused = false;  
-let allEvents = [];       // buffer local dos últimos MAX_LINES eventos (para poder filtrar retroativamente)  
-let requestIdFilter = null;  
-  
-function fmtTs(ts) {{  
-  if (ts === undefined || ts === null || ts === "") return "";  
-  // structlog manda ISO string (TimeStamper fmt="iso"); mas o replay/eventos  
-  // sintéticos podem vir como epoch em segundos — aceita os dois formatos.  
-  const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);  
-  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString();  
-}}  
-  
-function hashColor(str) {{  
-  let hash = 0;  
-  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;  
-  return `hsl(${{hash % 360}}, 65%, 55%)`;  
-}}  
-  
-function passesFilter(evt) {{  
-  const lvl = (evt.level || "info").toLowerCase();  
-  if (levelSelect.value !== "all" && lvl !== levelSelect.value) return false;  
-  if (requestIdFilter && evt.request_id !== requestIdFilter) return false;  
-  const q = searchInput.value.trim().toLowerCase();  
-  if (q && !JSON.stringify(evt).toLowerCase().includes(q)) return false;  
-  return true;  
-}}  
-  
-function buildLineEl(evt) {{  
-  const lvl = (evt.level || "info").toLowerCase();  
-  const div = document.createElement("div");  
-  div.className = "line lvl-" + lvl + (evt.request_id && evt.request_id === requestIdFilter ? " req-active" : "");  
-  if (evt.request_id) {{  
-    const dot = document.createElement("span");  
-    dot.className = "reqdot";  
-    dot.style.background = hashColor(evt.request_id);  
-    dot.title = "request_id: " + evt.request_id + " (clique pra filtrar)";  
-    div.appendChild(dot);  
-  }}  
+
+
+// ---- Console de logs ao vivo (SSE) ----
+const consoleEl = document.getElementById("console");
+const statusEl = document.getElementById("console-status");
+const pauseBtn = document.getElementById("console-pause");
+const clearBtn = document.getElementById("console-clear");
+const levelSelect = document.getElementById("console-level");
+const searchInput = document.getElementById("console-search");
+const clearFilterBtn = document.getElementById("console-clear-filter");
+const errorRateEl = document.getElementById("error-rate");
+const MAX_LINES = 500;
+let paused = false;
+let allEvents = [];       // buffer local dos últimos MAX_LINES eventos (para poder filtrar retroativamente)
+let requestIdFilter = null;
+
+function fmtTs(ts) {{
+  if (ts === undefined || ts === null || ts === "") return "";
+  // structlog manda ISO string (TimeStamper fmt="iso"); mas o replay/eventos
+  // sintéticos podem vir como epoch em segundos — aceita os dois formatos.
+  const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
+  return isNaN(d.getTime()) ? "" : d.toLocaleTimeString();
+}}
+
+function hashColor(str) {{
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) >>> 0;
+  return `hsl(${{hash % 360}}, 65%, 55%)`;
+}}
+
+function passesFilter(evt) {{
+  const lvl = (evt.level || "info").toLowerCase();
+  if (levelSelect.value !== "all" && lvl !== levelSelect.value) return false;
+  if (requestIdFilter && evt.request_id !== requestIdFilter) return false;
+  const q = searchInput.value.trim().toLowerCase();
+  if (q && !JSON.stringify(evt).toLowerCase().includes(q)) return false;
+  return true;
+}}
+
+function buildLineEl(evt) {{
+  const lvl = (evt.level || "info").toLowerCase();
+  const div = document.createElement("div");
+  div.className = "line lvl-" + lvl + (evt.request_id && evt.request_id === requestIdFilter ? " req-active" : "");
+  if (evt.request_id) {{
+    const dot = document.createElement("span");
+    dot.className = "reqdot";
+    dot.style.background = hashColor(evt.request_id);
+    dot.title = "request_id: " + evt.request_id + " (clique pra filtrar)";
+    div.appendChild(dot);
+  }}
   const ts = document.createElement("span");
   ts.className = "ts";
   ts.textContent = fmtTs(evt.timestamp);
@@ -1360,28 +1360,28 @@ function buildLineEl(evt) {{
     msg.className = "msg lvl-" + lvl;
     msg.textContent = evtName;
     div.appendChild(msg);
-  }}  
-  if (evt.request_id) {{  
-    div.addEventListener("click", () => {{  
-      requestIdFilter = requestIdFilter === evt.request_id ? null : evt.request_id;  
-      clearFilterBtn.classList.toggle("hidden", !requestIdFilter);  
-      renderConsole();  
-    }});  
-  }}  
-  return div;  
-}}  
-  
-function renderConsole() {{  
-  const filtered = allEvents.filter(passesFilter);  
-  consoleEl.innerHTML = "";  
-  if (!filtered.length) {{  
-    consoleEl.innerHTML = '<div class="empty">Nenhum evento (ainda, ou filtrado).</div>';  
-  }} else {{  
-    for (const evt of filtered) consoleEl.appendChild(buildLineEl(evt));  
-    consoleEl.scrollTop = consoleEl.scrollHeight;  
-  }}  
-}}  
-  
+  }}
+  if (evt.request_id) {{
+    div.addEventListener("click", () => {{
+      requestIdFilter = requestIdFilter === evt.request_id ? null : evt.request_id;
+      clearFilterBtn.classList.toggle("hidden", !requestIdFilter);
+      renderConsole();
+    }});
+  }}
+  return div;
+}}
+
+function renderConsole() {{
+  const filtered = allEvents.filter(passesFilter);
+  consoleEl.innerHTML = "";
+  if (!filtered.length) {{
+    consoleEl.innerHTML = '<div class="empty">Nenhum evento (ainda, ou filtrado).</div>';
+  }} else {{
+    for (const evt of filtered) consoleEl.appendChild(buildLineEl(evt));
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }}
+}}
+
 const sparklineEl = document.getElementById("error-sparkline");
 function errorTimestampMs(evt) {{
   const t = typeof evt.timestamp === "number" ? evt.timestamp * 1000 : new Date(evt.timestamp).getTime();
@@ -1413,103 +1413,103 @@ function updateErrorRate() {{
   }}).join("");
   sparklineEl.innerHTML = bars;
   sparklineEl.classList.toggle("hidden", errorTimes.length === 0);
-}}  
-setInterval(updateErrorRate, 5000);  
-  
-function ingestEvent(evt) {{  
-  if (paused) return;  
-  allEvents.push(evt);  
-  if (allEvents.length > MAX_LINES) allEvents = allEvents.slice(-MAX_LINES);  
-  renderConsole();  
-  updateErrorRate();  
-}}  
-  
-pauseBtn.addEventListener("click", () => {{  
-  paused = !paused;  
-  pauseBtn.textContent = paused ? "Retomar" : "Pausar";  
-}});  
-clearBtn.addEventListener("click", () => {{ allEvents = []; renderConsole(); updateErrorRate(); }});  
-levelSelect.addEventListener("change", renderConsole);  
-searchInput.addEventListener("input", renderConsole);  
-clearFilterBtn.addEventListener("click", () => {{  
-  requestIdFilter = null;  
-  clearFilterBtn.classList.add("hidden");  
-  renderConsole();  
-}});  
-  
-const streamUrl = "/api/logs/stream" + (GW_TOKEN ? "?token=" + encodeURIComponent(GW_TOKEN) : "");  
-const source = new EventSource(streamUrl);  
-source.onopen = () => {{ statusEl.textContent = "conectado"; sseDown = false; updateConnBanner(); }};  
-source.onerror = () => {{ statusEl.textContent = "reconectando…"; sseDown = true; updateConnBanner(); }};  
-source.onmessage = (e) => {{  
-  try {{ ingestEvent(JSON.parse(e.data)); }} catch (err) {{ /* linha não-JSON, ignora */ }}  
-}};  
-  
-  
-// ---- Modal "Adicionar MCP" ----  
-const overlay = document.getElementById("add-mcp-overlay");  
-const form = document.getElementById("add-mcp-form");  
-const typeSelect = document.getElementById("add-mcp-type");  
-const errorEl = document.getElementById("add-mcp-error");  
-const submitBtn = document.getElementById("submit-add-mcp");  
-  
-function openModal() {{  
-  errorEl.classList.add("hidden");  
-  form.reset();  
-  toggleTypeFields();  
-  overlay.classList.remove("hidden");  
-  form.querySelector('[name="name"]').focus();  
-}}  
-function closeModal() {{ overlay.classList.add("hidden"); }}  
-  
-function toggleTypeFields() {{  
-  const isStdio = typeSelect.value === "stdio";  
-  document.getElementById("fields-stdio").classList.toggle("hidden", !isStdio);  
-  document.getElementById("fields-net").classList.toggle("hidden", isStdio);  
-}}  
-  
-document.getElementById("open-add-mcp").addEventListener("click", openModal);  
-document.getElementById("close-add-mcp").addEventListener("click", closeModal);  
-document.getElementById("cancel-add-mcp").addEventListener("click", closeModal);  
-overlay.addEventListener("click", (ev) => {{ if (ev.target === overlay) closeModal(); }});  
-typeSelect.addEventListener("change", toggleTypeFields);  
-  
-form.addEventListener("submit", async (ev) => {{  
-  ev.preventDefault();  
-  errorEl.classList.add("hidden");  
-  const data = new FormData(form);  
-  const payload = {{ name: (data.get("name") || "").trim(), type: data.get("type") }};  
-  if (payload.type === "stdio") {{  
-    payload.command = (data.get("command") || "").trim();  
-    payload.args = (data.get("args") || "")  
-      .split("\\n").map(s => s.trim()).filter(Boolean);  
-  }} else {{  
-    payload.url = (data.get("url") || "").trim();  
-  }}  
-  submitBtn.disabled = true;  
-  submitBtn.textContent = "Adicionando…";  
-  try {{  
-    const res = await fetch("/api/config/backends", {{  
-      method: "POST",  
-      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},  
-      body: JSON.stringify(payload),  
-    }});  
-    const body = await res.json().catch(() => ({{}}));  
-    if (!res.ok) {{  
-      errorEl.textContent = body.detail || `Erro ${{res.status}}`;  
-      errorEl.classList.remove("hidden");  
-      return;  
-    }}  
-    closeModal();  
-    alert(body.detail || "Backend adicionado. Reinicie o Gateway para aplicar.");  
-  }} catch (e) {{  
-    errorEl.textContent = "Erro de rede ao salvar.";  
-    errorEl.classList.remove("hidden");  
-  }} finally {{  
-    submitBtn.disabled = false;  
-    submitBtn.textContent = "Adicionar";  
-  }}  
-}});  
+}}
+setInterval(updateErrorRate, 5000);
+
+function ingestEvent(evt) {{
+  if (paused) return;
+  allEvents.push(evt);
+  if (allEvents.length > MAX_LINES) allEvents = allEvents.slice(-MAX_LINES);
+  renderConsole();
+  updateErrorRate();
+}}
+
+pauseBtn.addEventListener("click", () => {{
+  paused = !paused;
+  pauseBtn.textContent = paused ? "Retomar" : "Pausar";
+}});
+clearBtn.addEventListener("click", () => {{ allEvents = []; renderConsole(); updateErrorRate(); }});
+levelSelect.addEventListener("change", renderConsole);
+searchInput.addEventListener("input", renderConsole);
+clearFilterBtn.addEventListener("click", () => {{
+  requestIdFilter = null;
+  clearFilterBtn.classList.add("hidden");
+  renderConsole();
+}});
+
+const streamUrl = "/api/logs/stream" + (GW_TOKEN ? "?token=" + encodeURIComponent(GW_TOKEN) : "");
+const source = new EventSource(streamUrl);
+source.onopen = () => {{ statusEl.textContent = "conectado"; sseDown = false; updateConnBanner(); }};
+source.onerror = () => {{ statusEl.textContent = "reconectando…"; sseDown = true; updateConnBanner(); }};
+source.onmessage = (e) => {{
+  try {{ ingestEvent(JSON.parse(e.data)); }} catch (err) {{ /* linha não-JSON, ignora */ }}
+}};
+
+
+// ---- Modal "Adicionar MCP" ----
+const overlay = document.getElementById("add-mcp-overlay");
+const form = document.getElementById("add-mcp-form");
+const typeSelect = document.getElementById("add-mcp-type");
+const errorEl = document.getElementById("add-mcp-error");
+const submitBtn = document.getElementById("submit-add-mcp");
+
+function openModal() {{
+  errorEl.classList.add("hidden");
+  form.reset();
+  toggleTypeFields();
+  overlay.classList.remove("hidden");
+  form.querySelector('[name="name"]').focus();
+}}
+function closeModal() {{ overlay.classList.add("hidden"); }}
+
+function toggleTypeFields() {{
+  const isStdio = typeSelect.value === "stdio";
+  document.getElementById("fields-stdio").classList.toggle("hidden", !isStdio);
+  document.getElementById("fields-net").classList.toggle("hidden", isStdio);
+}}
+
+document.getElementById("open-add-mcp").addEventListener("click", openModal);
+document.getElementById("close-add-mcp").addEventListener("click", closeModal);
+document.getElementById("cancel-add-mcp").addEventListener("click", closeModal);
+overlay.addEventListener("click", (ev) => {{ if (ev.target === overlay) closeModal(); }});
+typeSelect.addEventListener("change", toggleTypeFields);
+
+form.addEventListener("submit", async (ev) => {{
+  ev.preventDefault();
+  errorEl.classList.add("hidden");
+  const data = new FormData(form);
+  const payload = {{ name: (data.get("name") || "").trim(), type: data.get("type") }};
+  if (payload.type === "stdio") {{
+    payload.command = (data.get("command") || "").trim();
+    payload.args = (data.get("args") || "")
+      .split("\\n").map(s => s.trim()).filter(Boolean);
+  }} else {{
+    payload.url = (data.get("url") || "").trim();
+  }}
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Adicionando…";
+  try {{
+    const res = await fetch("/api/config/backends", {{
+      method: "POST",
+      headers: {{ "Content-Type": "application/json", ...AUTH_HEADERS }},
+      body: JSON.stringify(payload),
+    }});
+    const body = await res.json().catch(() => ({{}}));
+    if (!res.ok) {{
+      errorEl.textContent = body.detail || `Erro ${{res.status}}`;
+      errorEl.classList.remove("hidden");
+      return;
+    }}
+    closeModal();
+    alert(body.detail || "Backend adicionado. Reinicie o Gateway para aplicar.");
+  }} catch (e) {{
+    errorEl.textContent = "Erro de rede ao salvar.";
+    errorEl.classList.remove("hidden");
+  }} finally {{
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Adicionar";
+  }}
+}});
 
 // ---- Botão "Testar" conectividade ----
 const testBtn = document.getElementById("test-connectivity");
@@ -1551,8 +1551,8 @@ testBtn.addEventListener("click", async () => {{
     testBtn.textContent = "Testar";
   }}
 }});
-</script>  
-</body>  
+</script>
+</body>
 </html>"""
 
 
@@ -1586,24 +1586,24 @@ def _render_backend_cards(servers: list[dict[str, Any]]) -> str:
         disabled_attr = "disabled" if status == "disabled" else ""
         can_disable = "" if status != "disabled" else "disabled"
         can_enable = "" if status == "disabled" else "disabled"
-        cards.append(f"""  
-        <div class="card" data-name="{name}">  
-          <div class="card-head">  
-            <span class="name">{name}</span>  
-            <span class="badge badge-{html.escape(status)}">{html.escape(status)}</span>  
-          </div>  
-          <div class="meta">{meta}</div>  
-          <div class="counts">  
-            <span>Tools: <b>{s.get("tools_count", 0)}</b></span>  
-            <span>Res: <b>{s.get("resources_count", 0)}</b></span>  
-            <span>Prompts: <b>{s.get("prompts_count", 0)}</b></span>  
-            <span>Falhas: <b>{s.get("consecutive_failures", 0)}</b></span>  
-          </div>  
-          <div class="actions">  
-            <button class="act" data-action="restart" {disabled_attr}>Restart</button>  
-            <button class="act" data-action="disable" {can_disable}>Disable</button>  
-            <button class="act" data-action="enable" {can_enable}>Enable</button>  
-          </div>  
+        cards.append(f"""
+        <div class="card" data-name="{name}">
+          <div class="card-head">
+            <span class="name">{name}</span>
+            <span class="badge badge-{html.escape(status)}">{html.escape(status)}</span>
+          </div>
+          <div class="meta">{meta}</div>
+          <div class="counts">
+            <span>Tools: <b>{s.get("tools_count", 0)}</b></span>
+            <span>Res: <b>{s.get("resources_count", 0)}</b></span>
+            <span>Prompts: <b>{s.get("prompts_count", 0)}</b></span>
+            <span>Falhas: <b>{s.get("consecutive_failures", 0)}</b></span>
+          </div>
+          <div class="actions">
+            <button class="act" data-action="restart" {disabled_attr}>Restart</button>
+            <button class="act" data-action="disable" {can_disable}>Disable</button>
+            <button class="act" data-action="enable" {can_enable}>Enable</button>
+          </div>
         </div>""")
     return "\n".join(cards)
 
@@ -1712,7 +1712,11 @@ def _render_backend_detail(
         for entry in sorted_entries:
             item_name = html.escape(entry.name)
             description = entry.metadata.get("description") or ""
-            desc_html = f'<div class="item-desc">{html.escape(str(description))}</div>' if description else ""
+            desc_html = (
+                f'<div class="item-desc">{html.escape(str(description))}</div>'
+                if description
+                else ""
+            )
             items.append(
                 f'<div class="item"><div class="item-name">{item_name}</div>{desc_html}</div>'
             )
@@ -1852,8 +1856,6 @@ document.querySelectorAll("button.act").forEach(btn => {{
 </html>"""
 
 
-
-
 def _backup_config(config_path: str) -> None:
     """Salva config.json como .bak antes de cada escrita.
 
@@ -1932,6 +1934,7 @@ def _build_backend_entry(payload: dict[str, Any]) -> dict[str, Any]:
         return entry
     return {"name": name, "type": btype, "url": payload["url"].strip()}
 
+
 def _dashboard_browser_url(auth_token: str | None) -> str:
     """URL que o auto-open do dashboard abre no navegador.
 
@@ -1963,12 +1966,12 @@ def _dashboard_browser_url(auth_token: str | None) -> str:
     return url
 
 
-def create_app(  
-    mcp_server: McpServer,  
-    *,  
-    auth_token: str | None = None,  
-    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,  
-) -> FastAPI:  
+def create_app(
+    mcp_server: McpServer,
+    *,
+    auth_token: str | None = None,
+    max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
+) -> FastAPI:
     """Monta a aplicação FastAPI do Gateway: rota MCP, dashboard e API HTTP.
 
     Reúne tudo que fica exposto via HTTP: ``POST /mcp`` (JSON-RPC, ver
@@ -1984,51 +1987,51 @@ def create_app(
     Cada request HTTP ganha um ``request_id`` (UUID) vinculado via
     contextvars; todos os logs da mesma requisição carregam o mesmo id
     automaticamente (ver gateway.logging).
-    """  
-  
-    def _maybe_open_browser() -> None:  
-        """Abre o dashboard no navegador, salvo em modo headless.  
-  
-        Controlado por env var: ``MCP_GATEWAY_OPEN_BROWSER=false`` desliga;  
-        porta e host vêm de ``MCP_GATEWAY_PORT``/``MCP_GATEWAY_HOST`` — as  
-        mesmas env vars do bind do uvicorn (ver ``_dashboard_browser_url``).  
-        """  
-        if os.environ.get("MCP_GATEWAY_OPEN_BROWSER", "true").strip().lower() in (  
-            "0",  
-            "false",  
-            "no",  
-        ):  
-            return  
-        url = _dashboard_browser_url(auth_token)  
-  
-        def _open() -> None:  
-            time.sleep(0.6)  # dá tempo do uvicorn começar a aceitar conexões  
-            try:  
-                webbrowser.open(url)  
-            except Exception:  
-                logger.info("dashboard_auto_open_failed", url=url)  
-  
-        threading.Thread(target=_open, daemon=True).start()  
-  
-    @asynccontextmanager  
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:  
-        """Startup do Gateway: liga o console de logs ao loop e abre o dashboard.  
-  
-        Substitui o antigo ``@app.on_event("startup")`` (deprecado no FastAPI):  
-        o código antes do ``yield`` roda no startup.  
-        """  
-        log_broadcaster.bind_loop(asyncio.get_running_loop())  
-        _maybe_open_browser()  
-        yield  
-  
-    app = FastAPI(  
-        title="Sentinel",  
-        version=APP_VERSION,  
-        docs_url=None,  
-        redoc_url=None,  
-        openapi_url=None,  
-        lifespan=lifespan,  
-    )   
+    """
+
+    def _maybe_open_browser() -> None:
+        """Abre o dashboard no navegador, salvo em modo headless.
+
+        Controlado por env var: ``MCP_GATEWAY_OPEN_BROWSER=false`` desliga;
+        porta e host vêm de ``MCP_GATEWAY_PORT``/``MCP_GATEWAY_HOST`` — as
+        mesmas env vars do bind do uvicorn (ver ``_dashboard_browser_url``).
+        """
+        if os.environ.get("MCP_GATEWAY_OPEN_BROWSER", "true").strip().lower() in (
+            "0",
+            "false",
+            "no",
+        ):
+            return
+        url = _dashboard_browser_url(auth_token)
+
+        def _open() -> None:
+            time.sleep(0.6)  # dá tempo do uvicorn começar a aceitar conexões
+            try:
+                webbrowser.open(url)
+            except Exception:
+                logger.info("dashboard_auto_open_failed", url=url)
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        """Startup do Gateway: liga o console de logs ao loop e abre o dashboard.
+
+        Substitui o antigo ``@app.on_event("startup")`` (deprecado no FastAPI):
+        o código antes do ``yield`` roda no startup.
+        """
+        log_broadcaster.bind_loop(asyncio.get_running_loop())
+        _maybe_open_browser()
+        yield
+
+    app = FastAPI(
+        title="Sentinel",
+        version=APP_VERSION,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
 
     def _is_authorized(request: Request, token_override: str | None = None) -> bool:
         """Checa o token configurado contra o header Bearer e/ou ``?token=``.
@@ -2179,7 +2182,9 @@ def create_app(
             "resources": [e for e in resources.list_all() if e.backend == name],
             "prompts": [e for e in prompts.list_all() if e.backend == name],
         }
-        return HTMLResponse(content=_render_backend_detail(state_details[0], entries, token=effective_token))
+        return HTMLResponse(
+            content=_render_backend_detail(state_details[0], entries, token=effective_token)
+        )
 
     async def _control_route(
         request: Request, name: str, action: str, operation: Any
@@ -2267,9 +2272,7 @@ def create_app(
             with open(config_path, "r", encoding="utf-8") as f:
                 raw_text = f.read()
         except OSError as exc:
-            return JSONResponse(
-                status_code=500, content={"detail": f"falha ao ler config: {exc}"}
-            )
+            return JSONResponse(status_code=500, content={"detail": f"falha ao ler config: {exc}"})
         return Response(content=raw_text, media_type="application/json")
 
     @app.post("/api/config/import")
@@ -2423,9 +2426,7 @@ def create_app(
                 status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
             )
         except json.JSONDecodeError as exc:
-            return JSONResponse(
-                status_code=500, content={"detail": f"config.json inválido: {exc}"}
-            )
+            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
         return JSONResponse(content={key: raw_config.get(key) for key in _SETTINGS_FIELDS})
 
     @app.put("/api/config/settings")
@@ -2446,7 +2447,9 @@ def create_app(
         except Exception:
             return JSONResponse(status_code=400, content={"detail": "JSON inválido"})
         if not isinstance(payload, dict):
-            return JSONResponse(status_code=422, content={"detail": "corpo deve ser um objeto JSON"})
+            return JSONResponse(
+                status_code=422, content={"detail": "corpo deve ser um objeto JSON"}
+            )
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
@@ -2457,9 +2460,7 @@ def create_app(
                 status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
             )
         except json.JSONDecodeError as exc:
-            return JSONResponse(
-                status_code=500, content={"detail": f"config.json inválido: {exc}"}
-            )
+            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
 
         updated = dict(raw_config)
         for key in _SETTINGS_FIELDS:
@@ -2505,9 +2506,7 @@ def create_app(
             with open(config_path, "r", encoding="utf-8") as f:
                 raw_text = f.read()
         except OSError as exc:
-            return JSONResponse(
-                status_code=500, content={"detail": f"falha ao ler config: {exc}"}
-            )
+            return JSONResponse(status_code=500, content={"detail": f"falha ao ler config: {exc}"})
         return Response(content=raw_text, media_type="application/json")
 
     @app.post("/api/config/restore")
@@ -2574,7 +2573,9 @@ def create_app(
                 content={"detail": f"script de importação indisponível: {exc}"},
             )
         found = find_claude_desktop_config()
-        return JSONResponse(content={"found": found is not None, "path": str(found) if found else None})
+        return JSONResponse(
+            content={"found": found is not None, "path": str(found) if found else None}
+        )
 
     @app.post("/api/import/claude-desktop")
     async def import_claude_desktop(request: Request) -> JSONResponse:
@@ -2698,7 +2699,10 @@ def create_app(
                 )
 
         logger.info(
-            "claude_desktop_imported", source=str(source_path), added=len(added), skipped=len(skipped)
+            "claude_desktop_imported",
+            source=str(source_path),
+            added=len(added),
+            skipped=len(skipped),
         )
         detail = f"{len(added)} backend(s) importado(s) de {source_path}."
         if skipped:
@@ -2891,6 +2895,7 @@ def create_app(
 
         backend_type = payload.get("type", "stdio")
         import time as _time
+
         start = _time.monotonic()
 
         try:
@@ -2899,33 +2904,50 @@ def create_app(
                 cmd = payload["command"]
                 args = payload.get("args", [])
                 import asyncio as _aio
+
                 proc = await _aio.create_subprocess_exec(
-                    cmd, *args,
+                    cmd,
+                    *args,
                     stdin=_aio.subprocess.PIPE,
                     stdout=_aio.subprocess.PIPE,
                     stderr=_aio.subprocess.PIPE,
                 )
                 # Envia initialize e espera resposta com timeout
-                init_msg = json.dumps({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2025-03-26",
-                        "capabilities": {},
-                        "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
-                    },
-                }) + "\n"
+                init_msg = (
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-03-26",
+                                "capabilities": {},
+                                "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
+                            },
+                        }
+                    )
+                    + "\n"
+                )
                 proc.stdin.write(init_msg.encode())  # type: ignore
                 try:
                     raw = await _aio.wait_for(proc.stdout.readline(), timeout=10.0)  # type: ignore
                     elapsed = round((_time.monotonic() - start) * 1000)
                     if raw:
-                        return JSONResponse(content={"ok": True, "latency_ms": elapsed, "detail": "conexão OK"})
-                    return JSONResponse(content={"ok": False, "latency_ms": elapsed, "detail": "processo respondeu vazio"})
+                        return JSONResponse(
+                            content={"ok": True, "latency_ms": elapsed, "detail": "conexão OK"}
+                        )
+                    return JSONResponse(
+                        content={
+                            "ok": False,
+                            "latency_ms": elapsed,
+                            "detail": "processo respondeu vazio",
+                        }
+                    )
                 except _aio.TimeoutError:
                     proc.kill()
-                    return JSONResponse(content={"ok": False, "detail": "timeout aguardando resposta (10s)"})
+                    return JSONResponse(
+                        content={"ok": False, "detail": "timeout aguardando resposta (10s)"}
+                    )
                 finally:
                     if proc.returncode is None:
                         proc.kill()
@@ -2933,22 +2955,42 @@ def create_app(
                 # HTTP/SSE: tenta POST na url
                 url = payload["url"]
                 async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(url, json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2025-03-26",
-                            "capabilities": {},
-                            "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
+                    resp = await client.post(
+                        url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2025-03-26",
+                                "capabilities": {},
+                                "clientInfo": {"name": "sentinel-test", "version": "0.0.1"},
+                            },
                         },
-                    })
+                    )
                     elapsed = round((_time.monotonic() - start) * 1000)
                     if resp.status_code < 500:
-                        return JSONResponse(content={"ok": True, "latency_ms": elapsed, "detail": f"respondeu HTTP {resp.status_code}"})
-                    return JSONResponse(content={"ok": False, "latency_ms": elapsed, "detail": f"servidor retornou HTTP {resp.status_code}"})
+                        return JSONResponse(
+                            content={
+                                "ok": True,
+                                "latency_ms": elapsed,
+                                "detail": f"respondeu HTTP {resp.status_code}",
+                            }
+                        )
+                    return JSONResponse(
+                        content={
+                            "ok": False,
+                            "latency_ms": elapsed,
+                            "detail": f"servidor retornou HTTP {resp.status_code}",
+                        }
+                    )
         except FileNotFoundError:
-            return JSONResponse(content={"ok": False, "detail": f"comando '{payload.get('command')}' não encontrado"})
+            return JSONResponse(
+                content={
+                    "ok": False,
+                    "detail": f"comando '{payload.get('command')}' não encontrado",
+                }
+            )
         except Exception as exc:
             return JSONResponse(content={"ok": False, "detail": f"erro: {exc}"})
 

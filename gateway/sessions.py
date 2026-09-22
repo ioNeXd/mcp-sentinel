@@ -61,11 +61,11 @@ PURGE_EVERY_N_WRITES = 32
 """Limpeza oportunista: a cada N escritas, remove sessões expiradas."""
 
 PURGE_INTERVAL_SECONDS = 300.0
-"""Intervalo máximo entre purgas oportunistas e período do loop do  
+"""Intervalo máximo entre purgas oportunistas e período do loop do
 ``SessionPurger``: uma constante só, duas frentes de limpeza no mesmo ritmo."""
 
 MAX_SESSION_ID_LENGTH = 128
-"""Tamanho máximo de um session_id: é chave de dict e aparece em logs  
+"""Tamanho máximo de um session_id: é chave de dict e aparece em logs
 estruturados — valor maior é tratado como 'sem sessão', nunca aceito cru."""
 
 _SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._~-]+$")

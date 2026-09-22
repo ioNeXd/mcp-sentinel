@@ -413,9 +413,7 @@ class BackendManager:
         cobre também um backend adicionado ao vivo via ``add_backend``.
         """
         history = self._history.setdefault(backend_name, deque(maxlen=HISTORY_SAMPLE_CAP))
-        history.append(
-            {"timestamp": time.time(), "status": status.value, "latency_ms": latency_ms}
-        )
+        history.append({"timestamp": time.time(), "status": status.value, "latency_ms": latency_ms})
 
     def history_for(self, backend_name: str) -> list[dict[str, Any]]:
         """Devolve uma cópia das amostras de histórico do backend (Fase 8).

@@ -1,50 +1,50 @@
 #!/usr/bin/env python
-"""Importador de ``claude_desktop_config.json`` para o config do McpSentinel (Fase 4).  
-  
-Lê a seção ``mcpServers`` do config do Claude Desktop e converte cada entrada  
-para o formato de backends do Gateway:  
-  
-- entradas com ``command``/``args`` viram backends ``type: "stdio"``;  
-- entradas com ``url`` + ``type`` (http/sse) são convertidas diretamente — o  
-  formato remoto do Claude Desktop já coincide com o do Gateway;  
-- entradas que usam uma PONTE para servidor remoto (``mcp-remote``,  
-  ``supergateway``, ``mcp-proxy``...) NÃO são convertidas automaticamente —  
-  são sinalizadas com um aviso claro. A ponte vira um processo stdio do ponto  
-  de vista do Gateway (funcionaria!), mas esconderia a conexão remota dentro  
-  de um subprocesso: perde-se o ``type: "http"/"sse"`` nativo (health check de  
-  verdade, reconexão sem processo filho) e a decisão de qual URL/transporte  
-  usar é do operador, não do importador.  
-  
-Segurança em relação ao ``config/config.json`` existente: o importador NUNCA  
-sobrescreve silenciosamente. Sem flags, grava em ``config/config.imported.json``  
-(para revisão e mesclagem manual — o Gateway não tem hot-reload, então mesclar  
-é uma decisão do operador); ``--output CAMINHO`` escolhe outro destino; e  
-qualquer destino que já exista exige ``--force`` explícito.  
-  
-Uso::  
-  
-    python scripts/import_claude_desktop_config.py [CAMINHO] [opções]  
-  
-    CAMINHO          config do Claude Desktop (default: busca automatica nos  
-                     caminhos conhecidos -- instalacao classica ou MSIX no  
-                     Windows, macOS, Linux -- ver find_claude_desktop_config)  
-    --output, -o     arquivo de destino (default: config/config.imported.json)  
-    --force          sobrescreve o destino se ele já existir  
-    --stdout         só imprime o JSON resultante (não grava nada)  
-    --prefix NOME    prefixa "NOME-" em todos os backends importados (útil  
-                     para evitar colisão de nomes ao mesclar com um config  
-                     que já tem backends)  
-    --list-servers   só lista o que foi encontrado, sem converter  
-    -v               imprime os avisos também no stderr  
-  
-Limitações conhecidas (documentadas no README):  
-- ``env`` por servidor do Claude não é aplicado (o Gateway não suporta env  
-  por backend) — a entrada é convertida e o campo sinalizado em aviso;  
-- ``cwd``, ``shell`` e campos desconhecidos são ignorados com aviso;  
-- pontes (mcp-remote e similares) não são convertidas — ver acima;  
-- ``url`` sem ``type`` não é convertida (o Gateway exige declarar o transporte);  
-- variáveis ``%ENV%``/``$ENV`` em command/args são expandidas best-effort com  
-  os valores atuais do ambiente (o Gateway não expande variáveis).  
+"""Importador de ``claude_desktop_config.json`` para o config do McpSentinel (Fase 4).
+
+Lê a seção ``mcpServers`` do config do Claude Desktop e converte cada entrada
+para o formato de backends do Gateway:
+
+- entradas com ``command``/``args`` viram backends ``type: "stdio"``;
+- entradas com ``url`` + ``type`` (http/sse) são convertidas diretamente — o
+  formato remoto do Claude Desktop já coincide com o do Gateway;
+- entradas que usam uma PONTE para servidor remoto (``mcp-remote``,
+  ``supergateway``, ``mcp-proxy``...) NÃO são convertidas automaticamente —
+  são sinalizadas com um aviso claro. A ponte vira um processo stdio do ponto
+  de vista do Gateway (funcionaria!), mas esconderia a conexão remota dentro
+  de um subprocesso: perde-se o ``type: "http"/"sse"`` nativo (health check de
+  verdade, reconexão sem processo filho) e a decisão de qual URL/transporte
+  usar é do operador, não do importador.
+
+Segurança em relação ao ``config/config.json`` existente: o importador NUNCA
+sobrescreve silenciosamente. Sem flags, grava em ``config/config.imported.json``
+(para revisão e mesclagem manual — o Gateway não tem hot-reload, então mesclar
+é uma decisão do operador); ``--output CAMINHO`` escolhe outro destino; e
+qualquer destino que já exista exige ``--force`` explícito.
+
+Uso::
+
+    python scripts/import_claude_desktop_config.py [CAMINHO] [opções]
+
+    CAMINHO          config do Claude Desktop (default: busca automatica nos
+                     caminhos conhecidos -- instalacao classica ou MSIX no
+                     Windows, macOS, Linux -- ver find_claude_desktop_config)
+    --output, -o     arquivo de destino (default: config/config.imported.json)
+    --force          sobrescreve o destino se ele já existir
+    --stdout         só imprime o JSON resultante (não grava nada)
+    --prefix NOME    prefixa "NOME-" em todos os backends importados (útil
+                     para evitar colisão de nomes ao mesclar com um config
+                     que já tem backends)
+    --list-servers   só lista o que foi encontrado, sem converter
+    -v               imprime os avisos também no stderr
+
+Limitações conhecidas (documentadas no README):
+- ``env`` por servidor do Claude não é aplicado (o Gateway não suporta env
+  por backend) — a entrada é convertida e o campo sinalizado em aviso;
+- ``cwd``, ``shell`` e campos desconhecidos são ignorados com aviso;
+- pontes (mcp-remote e similares) não são convertidas — ver acima;
+- ``url`` sem ``type`` não é convertida (o Gateway exige declarar o transporte);
+- variáveis ``%ENV%``/``$ENV`` em command/args são expandidas best-effort com
+  os valores atuais do ambiente (o Gateway não expande variáveis).
 """
 
 import argparse

@@ -149,9 +149,7 @@ class LogBroadcaster:
             RuntimeError: se o limite de subscribers simultâneos foi atingido.
         """
         if len(self._subscribers) >= MAX_SUBSCRIBERS:
-            raise RuntimeError(
-                f"limite de {MAX_SUBSCRIBERS} conexões de log simultâneas atingido"
-            )
+            raise RuntimeError(f"limite de {MAX_SUBSCRIBERS} conexões de log simultâneas atingido")
         queue: asyncio.Queue[str] = asyncio.Queue(maxsize=QUEUE_MAXSIZE)
         self._subscribers.add(queue)
         return queue, list(self._replay)

@@ -5,7 +5,6 @@ os testes existentes cobriam TTL/purge/max_sessions indiretamente, mas não
 validavam a lógica de qual sessão é removida quando o teto é atingido.
 """
 
-
 from gateway.sessions import SessionFilter
 
 
@@ -99,7 +98,7 @@ class TestEnforceMaxSessions:
 
         assert sf.session_count() == 2
         assert sf.active_backends("s1") is not None  # renovada
-        assert sf.active_backends("s2") is None      # evicted
+        assert sf.active_backends("s2") is None  # evicted
         assert sf.active_backends("s3") is not None
 
     def test_session_unica_nunca_evicta_por_si(self) -> None:

@@ -39,21 +39,21 @@ from gateway.errors import BackendDisconnectedError, BackendHttpStatusError, Bac
 logger = structlog.get_logger(__name__)
 
 CONNECT_TIMEOUT_SECONDS = 5.0
-"""Timeout de conexão, menor que o de request.  
-  
-Uma falha em estabelecer a conexão não deve esperar o timeout de request  
-completo (30s por padrão) para ser reportada.  
+"""Timeout de conexão, menor que o de request.
+
+Uma falha em estabelecer a conexão não deve esperar o timeout de request
+completo (30s por padrão) para ser reportada.
 """
 
 JSON_HEADERS = {
     "Content-Type": JSON_CONTENT_TYPE,
     "Accept": f"{JSON_CONTENT_TYPE}, {SSE_MEDIA_TYPE}",
 }
-"""Headers obrigatórios do transporte Streamable HTTP.  
-  
-Aplicados por último no merge de :meth:`HttpClient._post_headers`, vencendo  
-qualquer ``Content-Type``/``Accept`` custom do config (decisão deliberada:  
-esses cabeçalhos são parte do contrato do transporte, não configuráveis).  
+"""Headers obrigatórios do transporte Streamable HTTP.
+
+Aplicados por último no merge de :meth:`HttpClient._post_headers`, vencendo
+qualquer ``Content-Type``/``Accept`` custom do config (decisão deliberada:
+esses cabeçalhos são parte do contrato do transporte, não configuráveis).
 """
 
 
