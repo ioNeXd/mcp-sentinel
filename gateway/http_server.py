@@ -96,12 +96,31 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;  
   margin: 0; background: var(--bg); color: var(--text);  
 }  
-header {  
-  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;  
-  padding: 1rem 1.5rem; border-bottom: 1px solid var(--border);  
-  background: var(--bg);  
-}  
-header h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }  
+#sidebar {
+  position: fixed; left: 0; top: 0; bottom: 0; width: 60px;
+  background: var(--panel); border-right: 1px solid var(--border);
+  z-index: 15; display: flex; flex-direction: column; align-items: center;
+  padding: .6rem 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none;
+}
+#sidebar::-webkit-scrollbar { display: none; }
+#sidebar .sb-item {
+  display: flex; flex-direction: column; align-items: center; gap: .15rem;
+  padding: .5rem .2rem; width: 100%; cursor: pointer;
+  color: var(--muted); font-size: .65rem; text-decoration: none;
+  border: none; background: none; font-family: inherit;
+  transition: color .15s, background .15s;
+}
+#sidebar .sb-item:hover { color: var(--text); background: rgba(255,255,255,.05); }
+#sidebar .sb-item .sb-icon { font-size: 1.15rem; line-height: 1; }
+#sidebar .sb-item .sb-label { white-space: nowrap; }
+#sidebar .sb-item .sb-label-label { font-size: .6rem; }
+#sidebar .sb-divider { width: 70%; height: 1px; background: var(--border); margin: .3rem 0; }
+#sidebar .sb-logo { font-size: 1.3rem; padding: .4rem 0 .3rem; color: var(--accent); }
+#sidebar .pill { font-size: .55rem; padding: .1rem .35rem; }
+#sidebar .pill .dot { width: .35rem; height: .35rem; }
+#sidebar .switch span { font-size: .6rem; }
+#sidebar .switch input { margin: 0; }  
 .pill {  
   display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .6rem;  
   border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid var(--border);  
@@ -109,8 +128,9 @@ header h1 { font-size: 1.15rem; margin: 0; font-weight: 600; }
 .pill .dot { width: .5rem; height: .5rem; border-radius: 50%; }  
 .pill-ok .dot { background: var(--ok); } .pill-ok { color: var(--ok); }  
 .pill-degraded .dot { background: var(--warn); } .pill-degraded { color: var(--warn); }  
-.stat { color: var(--muted); font-size: .82rem; }  
-main { padding: 1.25rem 1.5rem 2rem; max-width: 78rem; margin: 0 auto; }  
+#sb-stats { color: var(--muted); font-size: .58rem; text-align: center; padding: 0 .2rem; line-height: 1.3; }
+#sb-endpoint { font-size: .52rem; color: var(--muted); text-align: center; padding: .2rem .1rem; word-break: break-all; line-height: 1.2; max-width: 56px; }
+main { padding: 1.25rem 1.5rem 2rem; max-width: 78rem; margin: 0 0 0 68px; }  
 h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .04em;  
   color: var(--muted); margin: 1.75rem 0 .75rem; }  
 #backends-grid {  
@@ -149,6 +169,7 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
 #console-toolbar {  
   display: flex; align-items: center; gap: .6rem; padding: .5rem .8rem;  
   border-bottom: 1px solid var(--border); font-size: .8rem; color: var(--muted);  
+  flex-wrap: wrap;
 }  
 #console-toolbar .grow { flex: 1; }  
 #console-toolbar button {  
@@ -218,10 +239,9 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
 }
 .conn-banner.hidden { display: none; }
 
-/* Cabecalho + banner de conexao colados num unico bloco sticky, nessa ordem
-   (banner ABAIXO do header): os dois permanecem visiveis juntos ao rolar a
-   pagina, e o banner nunca fica coberto pelo header nem flutua acima dele. */
-#sticky-top { position: sticky; top: 0; z-index: 10; }
+#conn-banner-top {
+  position: fixed; top: 0; left: 60px; right: 0; z-index: 12;
+}
 
 .btn-secondary {
   background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
@@ -328,6 +348,14 @@ body.density-compact .card { padding: .5rem .6rem; }
 body.density-compact .card .counts { margin-top: .3rem; }
 body.density-compact .card .actions { margin-top: .4rem; }
 body.density-compact .card .meta { display: none; }
+
+/* Sidebar button overrides */
+#sidebar button.act, #sidebar .btn-secondary, #sidebar .btn-primary, #sidebar .btn-danger {
+  padding: .3rem .35rem; font-size: .6rem; width: 48px; text-align: center;
+}
+#sidebar .btn-primary { font-size: .7rem; }
+#sidebar .btn-danger { font-size: .6rem; }
+#sidebar .gw-endpoint { display: none; }
 """
 
 
@@ -368,31 +396,32 @@ def _render_dashboard(
 <head>  
 <meta charset="utf-8">  
 <meta name="viewport" content="width=device-width, initial-scale=1">  
-<title>MCP Gateway — Dashboard</title>  
+<title>Sentinel — Dashboard</title>  
 <style>{_DASHBOARD_STYLE}</style>
 </head>
 <body>
-<div id="sticky-top">
-<header>
-  <h1>MCP Gateway</h1>
-  <span id="status-pill" class="pill pill-{status_safe}"><span class="dot"></span>{status_safe}</span>
-  <span class="stat" id="totals-stat">Tools: {totals} · Resources: {res_count} · Prompts: {prompt_count}</span>
-  <span class="grow"></span>
-  <span class="gw-endpoint" id="gw-endpoint" title="Endpoint MCP agregado — todo cliente MCP se conecta aqui">{gw_endpoint_safe}</span>
-  <span class="grow"></span>
-  <label class="switch"><input type="checkbox" id="density-toggle"><span>Compacto</span></label>
-  <label class="switch"><input type="checkbox" id="readonly-toggle"><span>Somente leitura</span></label>
-  <button id="export-snapshot" class="btn-secondary" title="Baixar JSON com /health + /api/servers + /api/tools/size">Exportar snapshot</button>
-  <button id="export-config" class="btn-secondary" title="Baixar config.json">Exportar config</button>
-  <button id="import-config-trigger" class="btn-secondary" title="Importar config.json">Importar config</button>
+<nav id="sidebar">
+  <div class="sb-logo" title="Sentinel">🛡</div>
+  <span id="status-pill" class="pill pill-{status_safe}"><span class="dot"></span></span>
+  <span id="sb-stats" class="stat">Tools: {totals}<br>Res: {res_count}<br>Prompts: {prompt_count}</span>
+  <span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span>
+  <span id="totals-stat" class="stat" style="display:none">Tools: {totals} · Resources: {res_count} · Prompts: {prompt_count}</span>
+  <span id="gw-endpoint" style="display:none">{gw_endpoint_safe}</span>
+  <div class="sb-divider"></div>
+  <label class="sb-item switch"><input type="checkbox" id="density-toggle"><span class="sb-label">📐 Compacto</span></label>
+  <label class="sb-item switch"><input type="checkbox" id="readonly-toggle"><span class="sb-label">🔒 Read-only</span></label>
+  <div class="sb-divider"></div>
+  <button id="export-snapshot" class="sb-item" title="Baixar snapshot JSON"><span class="sb-icon">📥</span><span class="sb-label sb-label-label">Snapshot</span></button>
+  <button id="export-config" class="sb-item" title="Baixar config.json"><span class="sb-icon">💾</span><span class="sb-label sb-label-label">Export</span></button>
+  <button id="import-config-trigger" class="sb-item" title="Importar config.json"><span class="sb-icon">📂</span><span class="sb-label sb-label-label">Import</span></button>
   <input type="file" id="import-config-file" accept="application/json" style="display:none;">
-  <button id="open-settings" class="btn-secondary">⚙ Configurações</button>
-  <button id="open-import-claude" class="btn-secondary">Importar Claude Desktop</button>
-  <button id="open-add-mcp" class="btn-primary">+ Adicionar MCP</button>
-  <button id="shutdown-gateway" class="btn-danger" title="Encerra o processo do Gateway (graceful shutdown)">Sair do MCP</button>
-</header>
+  <button id="open-settings" class="sb-item" title="Configurações"><span class="sb-icon">⚙️</span><span class="sb-label sb-label-label">Settings</span></button>
+  <button id="open-import-claude" class="sb-item" title="Importar Claude Desktop"><span class="sb-icon">📥</span><span class="sb-label sb-label-label">Claude</span></button>
+  <div class="sb-divider"></div>
+  <button id="open-add-mcp" class="sb-item" title="Adicionar MCP"><span class="sb-icon">➕</span><span class="sb-label sb-label-label">Add MCP</span></button>
+  <button id="shutdown-gateway" class="sb-item" title="Encerra o Gateway"><span class="sb-icon">⏻</span><span class="sb-label sb-label-label">Sair</span></button>
+</nav>
 <div id="conn-banner" class="conn-banner hidden">⚠ Conexão perdida com o Gateway — tentando reconectar…</div>
-</div>
 <main>
   <h2>Backends</h2>
   <div id="backends-grid">{cards_html}</div>
@@ -832,7 +861,7 @@ document.getElementById("shutdown-gateway").addEventListener("click", async () =
 // ---- Título da aba dinâmico: sinaliza degradação sem precisar olhar a aba ----
 function updateTabTitle(servers) {{
   const bad = servers.filter(s => ["offline", "failed"].includes((s.status || "").toLowerCase())).length;
-  document.title = bad > 0 ? `⚠ ${{bad}} com problema — MCP Gateway` : "MCP Gateway — Dashboard";
+  document.title = bad > 0 ? `⚠ ${{bad}} com problema — Sentinel` : "Sentinel — Dashboard";
 }}
 
   
@@ -1567,7 +1596,7 @@ def _render_backend_detail(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{name} — MCP Gateway</title>
+<title>{name} — Sentinel</title>
 <style>{_DETAIL_STYLE}</style>
 </head>
 <body>
@@ -1861,7 +1890,7 @@ def create_app(
         yield  
   
     app = FastAPI(  
-        title="MCP Gateway",  
+        title="Sentinel",  
         version=APP_VERSION,  
         docs_url=None,  
         redoc_url=None,  
