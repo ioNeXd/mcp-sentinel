@@ -84,53 +84,114 @@ Antes, a rota usava ``c.isalnum()``, que é Unicode-aware e aceitava acentos
 inválido e o Gateway não subia no boot seguinte."""
 
 
-_DASHBOARD_STYLE = """  
-:root {  
-  color-scheme: light dark;  
-  --bg: #0f1117; --panel: #171a23; --panel-2: #1d212c; --border: #2a2f3d;  
-  --text: #e6e8ef; --muted: #8b91a5; --accent: #5b8cff;  
-  --ok: #34c77b; --warn: #e0a63a; --err: #e05a5a; --off: #6b7284;  
-}  
-* { box-sizing: border-box; }  
-body {  
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;  
-  margin: 0; background: var(--bg); color: var(--text);  
-}  
-#sidebar {
-  position: fixed; left: 0; top: 0; bottom: 0; width: 60px;
-  background: var(--panel); border-right: 1px solid var(--border);
-  z-index: 15; display: flex; flex-direction: column; align-items: center;
-  padding: .6rem 0; overflow-y: auto; overflow-x: hidden;
-  scrollbar-width: none;
+_DASHBOARD_STYLE = """
+:root {
+  color-scheme: light dark;
+  --bg: #0f1117; --panel: #171a23; --panel-2: #1d212c; --border: #2a2f3d;
+  --text: #e6e8ef; --muted: #8b91a5; --accent: #5b8cff;
+  --ok: #34c77b; --warn: #e0a63a; --err: #e05a5a; --off: #6b7284;
+  --sb-width: 220px; --sb-collapsed: 60px;
 }
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  margin: 0; background: var(--bg); color: var(--text);
+}
+#sidebar {
+  position: fixed; left: 0; top: 0; bottom: 0; width: var(--sb-width);
+  background: var(--panel); border-right: 1px solid var(--border);
+  z-index: 15; display: flex; flex-direction: column;
+  padding: .6rem 0; overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: none; transition: width .2s ease;
+}
+#sidebar.collapsed { width: var(--sb-collapsed); }
 #sidebar::-webkit-scrollbar { display: none; }
 #sidebar .sb-item {
-  display: flex; flex-direction: column; align-items: center; gap: .15rem;
-  padding: .5rem .2rem; width: 100%; cursor: pointer;
-  color: var(--muted); font-size: .65rem; text-decoration: none;
-  border: none; background: none; font-family: inherit;
+  display: flex; align-items: center; gap: .6rem;
+  padding: .55rem .7rem; width: 100%; cursor: pointer;
+  color: var(--muted); font-size: .82rem; text-decoration: none;
+  border: none; background: none; font-family: inherit; white-space: nowrap;
   transition: color .15s, background .15s;
 }
 #sidebar .sb-item:hover { color: var(--text); background: rgba(255,255,255,.05); }
-#sidebar .sb-item .sb-icon { font-size: 1.15rem; line-height: 1; }
-#sidebar .sb-item .sb-label { white-space: nowrap; }
-#sidebar .sb-item .sb-label-label { font-size: .6rem; }
-#sidebar .sb-divider { width: 70%; height: 1px; background: var(--border); margin: .3rem 0; }
-#sidebar .sb-logo { font-size: 1.3rem; padding: .4rem 0 .3rem; color: var(--accent); }
-#sidebar .pill { font-size: .55rem; padding: .1rem .35rem; }
+#sidebar .sb-item .sb-icon { flex-shrink: 0; display: flex; align-items: center; }
+#sidebar .sb-item .sb-icon svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+#sidebar .sb-item .sb-label { white-space: nowrap; overflow: hidden; transition: opacity .15s; }
+#sidebar.collapsed .sb-label { opacity: 0; width: 0; }
+#sidebar .sb-divider { width: 70%; height: 1px; background: var(--border); margin: .3rem auto; flex-shrink: 0; }
+#sidebar .sb-logo {
+  display: flex; align-items: center; gap: .5rem; padding: .4rem .7rem;
+  color: var(--accent); font-size: 1rem; font-weight: 600;
+}
+#sidebar .sb-logo .sb-icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+#sidebar.collapsed .sb-logo .sb-logo-text { opacity: 0; width: 0; overflow: hidden; }
+#sidebar .sb-toggle {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  padding: .5rem 0; margin-top: auto; flex-shrink: 0; cursor: pointer;
+  color: var(--muted); background: none; border: none; border-top: 1px solid var(--border);
+  font-family: inherit; font-size: .9rem;
+}
+#sidebar .sb-toggle:hover { color: var(--text); }
+#sidebar .sb-toggle svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+#sidebar.collapsed .sb-toggle svg { transform: rotate(180deg); }
+#sidebar .sb-tooltip {
+  position: absolute; left: calc(var(--sb-collapsed) + 8px); top: 50%; transform: translateY(-50%);
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: .35rem;
+  padding: .25rem .5rem; font-size: .78rem; color: var(--text); white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 50;
+}
+#sidebar:not(.collapsed) .sb-tooltip { display: none; }
+#sb-stats { color: var(--muted); font-size: .6rem; text-align: center; padding: 0 .7rem; line-height: 1.3; overflow: hidden; transition: opacity .15s; }
+#sidebar.collapsed #sb-stats { opacity: 0; height: 0; padding: 0; margin: 0; }
+#sb-endpoint { font-size: .52rem; color: var(--muted); text-align: center; padding: .2rem .7rem; word-break: break-all; line-height: 1.2; overflow: hidden; transition: opacity .15s; }
+#sidebar.collapsed #sb-endpoint { opacity: 0; height: 0; padding: 0; margin: 0; }
+.pill {
+  display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .6rem;
+  border-radius: 999px; font-size: .72rem; font-weight: 600; border: 1px solid var(--border);
+}
+.pill .dot { width: .5rem; height: .5rem; border-radius: 50%; }
+.pill-ok .dot { background: var(--ok); } .pill-ok { color: var(--ok); }
+.pill-degraded .dot { background: var(--warn); } .pill-degraded { color: var(--warn); }
+#sidebar .pill { font-size: .58rem; padding: .1rem .4rem; }
 #sidebar .pill .dot { width: .35rem; height: .35rem; }
-#sidebar .switch span { font-size: .6rem; }
-#sidebar .switch input { margin: 0; }  
-.pill {  
-  display: inline-flex; align-items: center; gap: .4rem; padding: .2rem .6rem;  
-  border-radius: 999px; font-size: .8rem; font-weight: 600; border: 1px solid var(--border);  
-}  
-.pill .dot { width: .5rem; height: .5rem; border-radius: 50%; }  
-.pill-ok .dot { background: var(--ok); } .pill-ok { color: var(--ok); }  
-.pill-degraded .dot { background: var(--warn); } .pill-degraded { color: var(--warn); }  
-#sb-stats { color: var(--muted); font-size: .58rem; text-align: center; padding: 0 .2rem; line-height: 1.3; }
-#sb-endpoint { font-size: .52rem; color: var(--muted); text-align: center; padding: .2rem .1rem; word-break: break-all; line-height: 1.2; max-width: 56px; }
-main { padding: 1.25rem 1.5rem 2rem; max-width: 78rem; margin: 0 0 0 68px; }  
+#sidebar .pill .pill-text { transition: opacity .15s; overflow: hidden; white-space: nowrap; }
+#sidebar.collapsed .pill .pill-text { opacity: 0; width: 0; }
+#sidebar .switch { display: flex; align-items: center; gap: .5rem; font-size: .78rem; color: var(--muted); }
+#sidebar .switch input { margin: 0; }
+#sb-stats-wrapper { padding: 0 .2rem; overflow: hidden; transition: max-height .15s, opacity .15s; }
+#sidebar.collapsed #sb-stats-wrapper { max-height: 0; opacity: 0; }
+#sb-endpoint-wrapper { padding: 0 .2rem; overflow: hidden; transition: max-height .15s, opacity .15s; }
+#sidebar.collapsed #sb-endpoint-wrapper { max-height: 0; opacity: 0; }
+main {
+  padding: 1.25rem 1.5rem 2rem; max-width: 78rem; margin: 0 auto;
+  padding-left: var(--sb-width); transition: padding-left .2s ease;
+}
+body.sidebar-collapsed main { padding-left: var(--sb-collapsed); }
+#sb-mobile-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  z-index: 14;
+}
+#sb-mobile-toggle {
+  display: none; position: fixed; top: .6rem; left: .6rem; z-index: 16;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  border-radius: .4rem; padding: .35rem .5rem; cursor: pointer; font-size: 1.1rem;
+}
+@media (max-width: 768px) {
+  #sidebar { width: 260px; transform: translateX(-100%); transition: transform .2s ease; }
+  #sidebar.mobile-open { transform: translateX(0); }
+  #sidebar.collapsed { width: 260px; }
+  #sidebar .sb-label { opacity: 1; width: auto; }
+  #sidebar .sb-logo .sb-logo-text { opacity: 1; width: auto; }
+  #sidebar .pill .pill-text { opacity: 1; width: auto; }
+  #sidebar.collapsed #sb-stats { opacity: 1; height: auto; padding: 0 .7rem; }
+  #sidebar.collapsed #sb-stats-wrapper { max-height: 100px; opacity: 1; }
+  #sidebar.collapsed #sb-endpoint { opacity: 1; height: auto; padding: .2rem .7rem; }
+  #sidebar.collapsed #sb-endpoint-wrapper { max-height: 100px; opacity: 1; }
+  #sb-mobile-overlay.open { display: block; }
+  #sb-mobile-toggle { display: block; }
+  main { padding-left: 1rem !important; padding-top: 3rem; }
+}
+
 h2 { font-size: .95rem; text-transform: uppercase; letter-spacing: .04em;  
   color: var(--muted); margin: 1.75rem 0 .75rem; }  
 #backends-grid {  
@@ -240,7 +301,12 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
 .conn-banner.hidden { display: none; }
 
 #conn-banner-top {
-  position: fixed; top: 0; left: 60px; right: 0; z-index: 12;
+  position: fixed; top: 0; left: var(--sb-width); right: 0; z-index: 12;
+  transition: left .2s ease;
+}
+body.sidebar-collapsed #conn-banner-top { left: var(--sb-collapsed); }
+@media (max-width: 768px) {
+  #conn-banner-top { left: 0; }
 }
 
 .btn-secondary {
@@ -400,26 +466,61 @@ def _render_dashboard(
 <style>{_DASHBOARD_STYLE}</style>
 </head>
 <body>
+<button id="sb-mobile-toggle" aria-label="Menu">&#9776;</button>
+<div id="sb-mobile-overlay"></div>
 <nav id="sidebar">
-  <div class="sb-logo" title="Sentinel">🛡</div>
-  <span id="status-pill" class="pill pill-{status_safe}"><span class="dot"></span></span>
-  <span id="sb-stats" class="stat">Tools: {totals}<br>Res: {res_count}<br>Prompts: {prompt_count}</span>
-  <span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span>
-  <span id="totals-stat" class="stat" style="display:none">Tools: {totals} · Resources: {res_count} · Prompts: {prompt_count}</span>
+  <div class="sb-logo" title="Sentinel">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M12 2 L3 7 L3 13 C3 18 7 22 12 23 C17 22 21 18 21 13 L21 7 Z"/></svg></span>
+    <span class="sb-logo-text">Sentinel</span>
+  </div>
+  <span id="status-pill" class="pill pill-{status_safe}"><span class="dot"></span><span class="pill-text">{status_safe}</span></span>
+  <div id="sb-stats-wrapper"><span id="sb-stats">Tools: {totals} &middot; Res: {res_count} &middot; Prompts: {prompt_count}</span></div>
+  <div id="sb-endpoint-wrapper"><span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span></div>
+  <span id="totals-stat" style="display:none">Tools: {totals} &middot; Resources: {res_count} &middot; Prompts: {prompt_count}</span>
   <span id="gw-endpoint" style="display:none">{gw_endpoint_safe}</span>
   <div class="sb-divider"></div>
-  <label class="sb-item switch"><input type="checkbox" id="density-toggle"><span class="sb-label">📐 Compacto</span></label>
-  <label class="sb-item switch"><input type="checkbox" id="readonly-toggle"><span class="sb-label">🔒 Read-only</span></label>
+  <label class="sb-item switch" data-tooltip="Compacto">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span>
+    <input type="checkbox" id="density-toggle"><span class="sb-label">Compacto</span>
+  </label>
+  <label class="sb-item switch" data-tooltip="Read-only">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>
+    <input type="checkbox" id="readonly-toggle"><span class="sb-label">Read-only</span>
+  </label>
   <div class="sb-divider"></div>
-  <button id="export-snapshot" class="sb-item" title="Baixar snapshot JSON"><span class="sb-icon">📥</span><span class="sb-label sb-label-label">Snapshot</span></button>
-  <button id="export-config" class="sb-item" title="Baixar config.json"><span class="sb-icon">💾</span><span class="sb-label sb-label-label">Export</span></button>
-  <button id="import-config-trigger" class="sb-item" title="Importar config.json"><span class="sb-icon">📂</span><span class="sb-label sb-label-label">Import</span></button>
+  <button id="export-snapshot" class="sb-item" title="Baixar snapshot JSON" data-tooltip="Snapshot">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+    <span class="sb-label">Snapshot</span>
+  </button>
+  <button id="export-config" class="sb-item" title="Baixar config.json" data-tooltip="Export">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>
+    <span class="sb-label">Export</span>
+  </button>
+  <button id="import-config-trigger" class="sb-item" title="Importar config.json" data-tooltip="Import">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+    <span class="sb-label">Import</span>
+  </button>
   <input type="file" id="import-config-file" accept="application/json" style="display:none;">
-  <button id="open-settings" class="sb-item" title="Configurações"><span class="sb-icon">⚙️</span><span class="sb-label sb-label-label">Settings</span></button>
-  <button id="open-import-claude" class="sb-item" title="Importar Claude Desktop"><span class="sb-icon">📥</span><span class="sb-label sb-label-label">Claude</span></button>
+  <button id="open-settings" class="sb-item" title="Configurações" data-tooltip="Settings">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></span>
+    <span class="sb-label">Settings</span>
+  </button>
+  <button id="open-import-claude" class="sb-item" title="Importar Claude Desktop" data-tooltip="Claude">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+    <span class="sb-label">Claude</span>
+  </button>
   <div class="sb-divider"></div>
-  <button id="open-add-mcp" class="sb-item" title="Adicionar MCP"><span class="sb-icon">➕</span><span class="sb-label sb-label-label">Add MCP</span></button>
-  <button id="shutdown-gateway" class="sb-item" title="Encerra o Gateway"><span class="sb-icon">⏻</span><span class="sb-label sb-label-label">Sair</span></button>
+  <button id="open-add-mcp" class="sb-item" title="Adicionar MCP" data-tooltip="Add MCP">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg></span>
+    <span class="sb-label">Add MCP</span>
+  </button>
+  <button id="shutdown-gateway" class="sb-item" title="Encerra o Gateway" data-tooltip="Sair">
+    <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span>
+    <span class="sb-label">Sair</span>
+  </button>
+  <button id="sb-toggle" class="sb-toggle" title="Expandir/Recolher">
+    <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
 </nav>
 <div id="conn-banner" class="conn-banner hidden">⚠ Conexão perdida com o Gateway — tentando reconectar…</div>
 <main>
@@ -569,7 +670,39 @@ def _render_dashboard(
 <script>  
 const GW_TOKEN = {token_js};  
 const AUTH_HEADERS = GW_TOKEN ? {{"Authorization": "Bearer " + GW_TOKEN}} : {{}};  
-  
+
+// ---- Sidebar toggle (expand/collapse) ----
+const sbEl = document.getElementById("sidebar");
+const sbToggle = document.getElementById("sb-toggle");
+const sbMobileToggle = document.getElementById("sb-mobile-toggle");
+const sbMobileOverlay = document.getElementById("sb-mobile-overlay");
+function applySidebarState() {{
+  const collapsed = localStorage.getItem("mcpgw_sidebar_collapsed") === "1";
+  sbEl.classList.toggle("collapsed", collapsed);
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+}}
+applySidebarState();
+sbToggle.addEventListener("click", () => {{
+  const collapsed = sbEl.classList.toggle("collapsed");
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  localStorage.setItem("mcpgw_sidebar_collapsed", collapsed ? "1" : "0");
+}});
+sbMobileToggle.addEventListener("click", () => {{
+  sbEl.classList.add("mobile-open");
+  sbMobileOverlay.classList.add("open");
+}});
+sbMobileOverlay.addEventListener("click", () => {{
+  sbEl.classList.remove("mobile-open");
+  sbMobileOverlay.classList.remove("open");
+}});
+// Touch swipe-to-close for mobile sidebar
+let _sbTouchX = 0;
+sbEl.addEventListener("touchstart", (e) => {{ _sbTouchX = e.touches[0].clientX; }}, {{ passive: true }});
+sbEl.addEventListener("touchend", (e) => {{
+  const dx = e.changedTouches[0].clientX - _sbTouchX;
+  if (dx < -50) {{ sbEl.classList.remove("mobile-open"); sbMobileOverlay.classList.remove("open"); }}
+}}, {{ passive: true }});
+
 // Escapa texto vindo da API antes de entrar em HTML montado por string.
 // O schema NÃO restringe command/url/args (só o name é ASCII), então um
 // config.json importado pode carregar metacaracteres de HTML nesses campos —
