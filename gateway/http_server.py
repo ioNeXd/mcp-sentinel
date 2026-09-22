@@ -184,15 +184,15 @@ button.act:disabled { opacity: .4; cursor: not-allowed; }
   background: none; border: none; color: var(--muted); font-size: 1.3rem;  
   cursor: pointer; line-height: 1;  
 }  
-#add-mcp-form label {  
-  display: block; font-size: .8rem; color: var(--muted); margin-top: .7rem;  
-}  
-#add-mcp-form input, #add-mcp-form select, #add-mcp-form textarea {  
-  width: 100%; margin-top: .25rem; background: var(--panel-2); border: 1px solid var(--border);  
-  color: var(--text); border-radius: .35rem; padding: .4rem .5rem; font-size: .85rem;  
-  font-family: inherit;  
-}  
-#add-mcp-form textarea { font-family: ui-monospace, monospace; resize: vertical; }  
+.modal label {
+  display: block; font-size: .8rem; color: var(--muted); margin-top: .7rem;
+}
+.modal input, .modal select, .modal textarea {
+  width: 100%; margin-top: .25rem; background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); border-radius: .35rem; padding: .4rem .5rem; font-size: .85rem;
+  font-family: inherit;
+}
+.modal textarea { font-family: ui-monospace, monospace; resize: vertical; }  
 .type-fields.hidden { display: none; }  
 .hint { color: var(--muted); font-size: .74rem; margin-top: .8rem; }  
 .error { color: var(--err); font-size: .78rem; margin-top: .5rem; }  
