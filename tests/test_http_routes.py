@@ -54,6 +54,9 @@ def app_auth():
 def _client(app):
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
+def _auth_headers(token: str = "test-token-123") -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
 
 # --- Health ---
 
