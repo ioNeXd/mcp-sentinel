@@ -484,6 +484,7 @@ def _render_dashboard(
   <div id="sb-endpoint-wrapper"><span id="sb-endpoint" title="Endpoint MCP — {gw_endpoint_safe}">{gw_endpoint_safe}</span></div>
   <span id="totals-stat" style="display:none">Tools: {totals} &middot; Resources: {res_count} &middot; Prompts: {prompt_count}</span>
   <span id="gw-endpoint" style="display:none">{gw_endpoint_safe}</span>
+  <div class="sb-divider"></div>
 
   <button id="export-snapshot" class="sb-item" title="Baixar snapshot JSON" data-tooltip="Snapshot">
     <span class="sb-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
