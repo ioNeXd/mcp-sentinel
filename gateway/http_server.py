@@ -296,6 +296,7 @@ body.readonly-mode .card-remove, body.readonly-mode #shutdown-gateway { display:
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  text-align: center;
 }
 #console .line .msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #console .msg.lvl-error, #console .msg.lvl-critical { color: var(--err); }

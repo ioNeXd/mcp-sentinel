@@ -16,6 +16,7 @@ Gateway deve preservar essa ordem.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import time
 from collections.abc import MutableMapping
@@ -121,10 +122,12 @@ class LogBroadcaster:
         for key, count in list(self._dedup_counts.items()):
             if count > 1:
                 parts = key.split("|")
+                now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
                 summary: dict[str, Any] = {
                     "event": "_repeated",
                     "original_event": parts[0] if parts else "",
                     "count": count,
+                    "timestamp": now_iso,
                 }
                 if len(parts) > 1 and parts[1]:
                     summary["backend"] = parts[1]
