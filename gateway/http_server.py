@@ -1186,32 +1186,31 @@ function buildLineEl(evt) {{
     dot.title = "request_id: " + evt.request_id + " (clique pra filtrar)";  
     div.appendChild(dot);  
   }}  
-  const ts = document.createElement("span");  
-  ts.className = "ts";  
-  ts.textContent = fmtTs(evt.timestamp);  
-  div.appendChild(ts);  
-  if (evt.event === "_repeated") {{
-    // Dedup: badge ×N entre timestamp e nome do evento.
+  const ts = document.createElement("span");
+  ts.className = "ts";
+  ts.textContent = fmtTs(evt.timestamp);
+  div.appendChild(ts);
+  // Dedup badge: ×N entre timestamp e backend.
+  if (evt.event === "_repeated" && evt.count > 1) {{
     const badge = document.createElement("span");
     badge.className = "dedup-badge";
-    badge.textContent = "×" + (evt.count || "?");
+    badge.textContent = "×" + evt.count;
     div.appendChild(badge);
-    const msg = document.createElement("span");
-    msg.className = "msg lvl-" + lvl;
-    msg.textContent = evt.original_event || "repeated";
-    div.appendChild(msg);
-    if (evt.backend) {{
-      const be = document.createElement("span");
-      be.className = "backend-tag";
-      be.textContent = evt.backend;
-      div.appendChild(be);
-    }}
-  }} else {{
-    const msg = document.createElement("span");
-    msg.className = "msg lvl-" + lvl;
-    msg.textContent = evt.event || JSON.stringify(evt);
-    div.appendChild(msg);
-  }}  
+  }}
+  // Backend tag (presentes em ambos: regular e dedup).
+  const backendName = evt.backend || (evt.event === "_repeated" ? "" : "");
+  if (backendName) {{
+    const be = document.createElement("span");
+    be.className = "backend-tag";
+    be.textContent = backendName;
+    div.appendChild(be);
+  }}
+  // Nome do evento com cor por nível.
+  const evtName = evt.event === "_repeated" ? (evt.original_event || "repeated") : (evt.event || JSON.stringify(evt));
+  const msg = document.createElement("span");
+  msg.className = "msg lvl-" + lvl;
+  msg.textContent = evtName;
+  div.appendChild(msg);  
   if (evt.request_id) {{  
     div.addEventListener("click", () => {{  
       requestIdFilter = requestIdFilter === evt.request_id ? null : evt.request_id;  
