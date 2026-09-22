@@ -285,6 +285,27 @@ body.readonly-mode .card-remove, body.readonly-mode #shutdown-gateway { display:
 #console .line.req-active { background: rgba(91,140,255,.12); }
 #console .reqdot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
 #console .msg { flex: 1; }
+#console .dedup-badge {
+  display: inline-block;
+  background: rgba(255,165,0,.25);
+  color: #ffb347;
+  font-size: .7rem;
+  font-weight: 600;
+  padding: .05rem .4rem;
+  border-radius: .6rem;
+  margin-left: .4rem;
+  vertical-align: middle;
+}
+#console .backend-tag {
+  display: inline-block;
+  background: rgba(91,140,255,.15);
+  color: #5b8cff;
+  font-size: .7rem;
+  padding: .05rem .4rem;
+  border-radius: .6rem;
+  margin-left: .3rem;
+  vertical-align: middle;
+}
 
 /* Card clicavel (Fase 7): o card inteiro navega para a pagina de detalhe;
    botoes internos (.actions, .card-remove, .pin-btn) usam stopPropagation
@@ -1165,9 +1186,24 @@ function buildLineEl(evt) {{
   ts.className = "ts";  
   ts.textContent = fmtTs(evt.timestamp);  
   div.appendChild(ts);  
-  const msg = document.createElement("span");  
-  msg.className = "msg";  
-  msg.textContent = evt.event || JSON.stringify(evt);  
+  const msg = document.createElement("span");
+  msg.className = "msg";
+  if (evt.event === "_repeated") {{
+    // Evento deduplicado: mostra "event_name ×N" com badge.
+    msg.textContent = evt.original_event || "repeated";
+    const badge = document.createElement("span");
+    badge.className = "dedup-badge";
+    badge.textContent = "×" + (evt.count || "?");
+    msg.appendChild(badge);
+    if (evt.backend) {{
+      const be = document.createElement("span");
+      be.className = "backend-tag";
+      be.textContent = evt.backend;
+      msg.appendChild(be);
+    }}
+  }} else {{
+    msg.textContent = evt.event || JSON.stringify(evt);
+  }}
   div.appendChild(msg);  
   if (evt.request_id) {{  
     div.addEventListener("click", () => {{  

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import MutableMapping
 from collections import deque
 from typing import Any
@@ -35,6 +36,25 @@ QUEUE_MAXSIZE = 1000
 MAX_SUBSCRIBERS = 100
 
 
+def _monotonic() -> float:
+    """Atalho para ``time.monotonic()"""
+    return time.monotonic()
+
+
+# Campos que compõem a chave de deduplicação — agrupa eventos idênticos
+# (mesmo evento, mesmo backend, mesma rota) num único log com contador.
+_DEDUP_KEY_FIELDS = ("event", "backend", "route")
+
+# Intervalo (segundos) entre flushs de eventos repetidos no broadcast.
+_DEDUP_FLUSH_INTERVAL = 5.0
+
+
+def _dedup_key(event_dict: dict[str, Any]) -> str:
+    """Gera uma chave de dedup a partir dos campos estáveis do evento."""
+    parts = [str(event_dict.get(f, "")) for f in _DEDUP_KEY_FIELDS]
+    return "|".join(parts)
+
+
 class LogBroadcaster:
     """Publica eventos de log estruturado para assinantes SSE em tempo real."""
 
@@ -42,6 +62,9 @@ class LogBroadcaster:
         self._subscribers: set[asyncio.Queue[str]] = set()
         self._replay: deque[str] = deque(maxlen=REPLAY_BUFFER_SIZE)
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._dedup_counts: dict[str, int] = {}
+        self._dedup_first_seen: dict[str, float] = {}
+        self._dedup_last_flush: float = 0.0
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Registra o event loop do Gateway (chamado uma vez no startup).
@@ -60,16 +83,61 @@ class LogBroadcaster:
         Chamado de dentro de um processor do structlog: precisa ser rápido
         e NUNCA lançar — um log quebrado não pode derrubar o logging real
         nem a request que o originou.
+
+        Deduplicação: a primeira ocorrência de cada evento é transmitida
+        imediatamente. Ocorrências seguintes acumulam contador e são
+        transmitidas como resumo (``_repeated``) a cada
+        ``_DEDUP_FLUSH_INTERVAL`` segundos.
         """
         try:
             line = json.dumps(_json_safe(event_dict), default=str)
         except Exception:
             return
+        key = _dedup_key(event_dict)
+        now = _monotonic()
+        self._dedup_counts[key] = self._dedup_counts.get(key, 0) + 1
+        if key not in self._dedup_first_seen:
+            self._dedup_first_seen[key] = now
+        # Primeira ocorrência: passa direto.
+        if self._dedup_counts[key] == 1:
+            self._raw_publish(line)
+            self._dedup_last_flush = now
+            return
+        # Ocorrências seguintes: aguarda flush periódico.
+        if now - self._dedup_last_flush >= _DEDUP_FLUSH_INTERVAL:
+            self._flush_dedup()
+
+    def _raw_publish(self, line: str) -> None:
+        """Publica uma linha JSON bruta sem deduplicação (interno)."""
         self._replay.append(line)
         if self._loop is None:
             return
         for queue in list(self._subscribers):
             self._loop.call_soon_threadsafe(_offer, queue, line)
+
+    def _flush_dedup(self) -> None:
+        """Emite resumo dos eventos repetidos e reseta contadores."""
+        now = _monotonic()
+        for key, count in list(self._dedup_counts.items()):
+            if count > 1:
+                parts = key.split("|")
+                summary: dict[str, Any] = {
+                    "event": "_repeated",
+                    "original_event": parts[0] if parts else "",
+                    "count": count,
+                }
+                if len(parts) > 1 and parts[1]:
+                    summary["backend"] = parts[1]
+                if len(parts) > 2 and parts[2]:
+                    summary["route"] = parts[2]
+                try:
+                    line = json.dumps(_json_safe(summary), default=str)
+                except Exception:
+                    continue
+                self._raw_publish(line)
+        self._dedup_counts.clear()
+        self._dedup_first_seen.clear()
+        self._dedup_last_flush = now
 
     async def subscribe(self) -> tuple[asyncio.Queue[str], list[str]]:
         """Registra um novo assinante; devolve a fila e o replay recente.
