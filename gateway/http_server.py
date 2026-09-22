@@ -128,6 +128,7 @@ body {
 }
 #sidebar .sb-logo .sb-icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 #sidebar.collapsed .sb-logo .sb-logo-text { opacity: 0; width: 0; overflow: hidden; }
+#sidebar.collapsed .sb-logo { padding: .4rem 0; gap: 0; justify-content: center; }
 #sidebar .sb-toggle {
   display: flex; align-items: center; justify-content: center; width: 100%;
   padding: .5rem 0; margin-top: auto; flex-shrink: 0; cursor: pointer;
