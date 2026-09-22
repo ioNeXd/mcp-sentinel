@@ -280,36 +280,28 @@ body.readonly-mode .card-remove, body.readonly-mode #shutdown-gateway { display:
 }
 #console-search { width: 10rem; }
 #console-clear-filter.hidden { display: none; }
-#console .line { cursor: pointer; display: flex; align-items: baseline; gap: .4rem; }
+#console .line { cursor: pointer; display: flex; align-items: center; gap: .4rem; padding: .15rem .4rem; height: 1.6rem; box-sizing: border-box; }
 #console .line:hover { background: rgba(255,255,255,.04); }
 #console .line.req-active { background: rgba(91,140,255,.12); }
-#console .line.reqdot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
-#console .msg { flex: 1; }
-#console .msg.lvl-error, #console .msg.lvl-critical { color: var(--err); }
-#console .msg.lvl-warning { color: var(--warn); }
-#console .msg.lvl-info { color: var(--text); }
-#console .msg.lvl-debug { color: var(--muted); }
-#console .dedup-badge {
-  display: inline-block;
-  background: rgba(255,165,0,.25);
-  color: #ffb347;
-  font-size: .7rem;
-  font-weight: 600;
-  padding: .05rem .4rem;
-  border-radius: .6rem;
-  margin-left: .4rem;
-  vertical-align: middle;
-}
-#console .backend-tag {
+#console .line .reqdot { width: .5rem; height: .5rem; border-radius: 50%; flex-shrink: 0; }
+#console .line .ts { width: 70px; flex-shrink: 0; }
+#console .line .backend-tag {
+  width: 110px; flex-shrink: 0;
   display: inline-block;
   background: rgba(91,140,255,.15);
   color: #5b8cff;
   font-size: .7rem;
   padding: .05rem .4rem;
   border-radius: .6rem;
-  margin-left: .3rem;
-  vertical-align: middle;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+#console .line .msg { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#console .msg.lvl-error, #console .msg.lvl-critical { color: var(--err); }
+#console .msg.lvl-warning { color: var(--warn); }
+#console .msg.lvl-info { color: var(--text); }
+#console .msg.lvl-debug { color: var(--muted); }
 
 /* Card clicavel (Fase 7): o card inteiro navega para a pagina de detalhe;
    botoes internos (.actions, .card-remove, .pin-btn) usam stopPropagation
@@ -1190,15 +1182,9 @@ function buildLineEl(evt) {{
   ts.className = "ts";
   ts.textContent = fmtTs(evt.timestamp);
   div.appendChild(ts);
-  // Dedup badge: ×N entre timestamp e backend.
-  if (evt.event === "_repeated" && evt.count > 1) {{
-    const badge = document.createElement("span");
-    badge.className = "dedup-badge";
-    badge.textContent = "×" + evt.count;
-    div.appendChild(badge);
-  }}
-  // Backend tag (presentes em ambos: regular e dedup).
-  const backendName = evt.backend || (evt.event === "_repeated" ? "" : "");
+  // Sem badge — eventos dedup já foram filtrados, só mostra o evento.
+  // Backend tag.
+  const backendName = evt.backend || "";
   if (backendName) {{
     const be = document.createElement("span");
     be.className = "backend-tag";
@@ -1206,11 +1192,13 @@ function buildLineEl(evt) {{
     div.appendChild(be);
   }}
   // Nome do evento com cor por nível.
-  const evtName = evt.event === "_repeated" ? (evt.original_event || "repeated") : (evt.event || JSON.stringify(evt));
-  const msg = document.createElement("span");
-  msg.className = "msg lvl-" + lvl;
-  msg.textContent = evtName;
-  div.appendChild(msg);  
+  const evtName = evt.event === "_repeated" ? (evt.original_event || "") : (evt.event || "");
+  if (evtName) {{
+    const msg = document.createElement("span");
+    msg.className = "msg lvl-" + lvl;
+    msg.textContent = evtName;
+    div.appendChild(msg);
+  }}  
   if (evt.request_id) {{  
     div.addEventListener("click", () => {{  
       requestIdFilter = requestIdFilter === evt.request_id ? null : evt.request_id;  
