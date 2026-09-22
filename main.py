@@ -243,7 +243,10 @@ async def _graceful_shutdown(
 if __name__ == "__main__":
     try:
         sys.exit(asyncio.run(main()))
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        # Desfecho normal do Ctrl+C após o cleanup completo do main():
+    except (KeyboardInterrupt, asyncio.CancelledError, SystemExit):
+        # Desfecho normal do Ctrl+C / shutdown via dashboard / SIGBREAK:
         # encerra com código 0 e SEM traceback.
         sys.exit(0)
+    except Exception:
+        # Erro inesperado: deixa traceback e encerra com código 1.
+        sys.exit(1)

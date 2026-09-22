@@ -385,9 +385,9 @@ def _render_dashboard(
         <option value="error">Error</option>
       </select>
       <input id="console-search" type="text" placeholder="Buscar… ( / )">
-      <button id="console-clear-filter" class="hidden">Limpar filtro request_id</button>
-      <button id="console-pause">Pausar</button>
-      <button id="console-clear">Limpar</button>
+      <button id="console-clear-filter" class="btn-secondary hidden">Limpar filtro request_id</button>
+      <button id="console-pause" class="btn-secondary">Pausar</button>
+      <button id="console-clear" class="btn-secondary">Limpar</button>
     </div>
     <div id="console"><div class="empty">Aguardando eventos…</div></div>
   </div>
@@ -502,7 +502,7 @@ def _render_dashboard(
       </label>
       <p id="import-claude-error" class="error hidden"></p>
       <div class="modal-actions">
-        <button type="button" id="cancel-import-claude">Cancelar</button>
+        <button type="button" id="cancel-import-claude" class="btn-secondary">Cancelar</button>
         <button type="submit" id="submit-import-claude" class="btn-primary">Importar</button>
       </div>
     </form>
