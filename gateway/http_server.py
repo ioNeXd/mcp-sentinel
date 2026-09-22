@@ -126,8 +126,6 @@ body {
   display: flex; align-items: center; justify-content: center; gap: .5rem; padding: .4rem .7rem;
   color: var(--accent); font-size: 1rem; font-weight: 600; width: 100%;
 }
-#sidebar:not(.collapsed) .sb-logo { justify-content: flex-start; }
-#sidebar.collapsed .sb-logo { justify-content: center; }
 #sidebar .sb-logo .sb-icon svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 #sidebar.collapsed .sb-logo .sb-logo-text { opacity: 0; width: 0; overflow: hidden; }
 #sidebar .sb-toggle {
