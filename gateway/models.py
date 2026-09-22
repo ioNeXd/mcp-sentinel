@@ -49,6 +49,10 @@ def is_supported_protocol_version(version: str | None) -> bool:
         return False
     return version in PROTOCOL_VERSIONS
 
+# ponytail: is_supported_protocol_version é dead code — negotiation usa
+# negotiate_protocol_version. Manter para multi-versão futura, ou remover
+# quando a lista de versões for estável.
+
 
 class JsonRpcRequest(BaseModel):
     """Request JSON-RPC 2.0 recebida pelo Gateway.

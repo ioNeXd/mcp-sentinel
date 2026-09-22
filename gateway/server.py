@@ -491,6 +491,10 @@ class McpServer:
         )
         call_params = dict(params)
         call_params["name"] = entry.name
+        # Em tools/call, arguments é sempre presente ({} se ausente) —
+        # garante que o backend nunca recebe None para esse campo.
+        # Em prompts/get, omissão é intencional: repassa o que o cliente
+        # mandou (o backend decide o comportamento default).
         call_params["arguments"] = arguments or {}
         return await self._call_backend(request.id, entry, "tools/call", call_params)
 
@@ -683,7 +687,7 @@ class McpServer:
         )
         filtered = self.sessions.active_backends(session_id) is not None
         return {
-            "tools_count": 1 + len(entries),
+            "tools_count": 1 + len(pairs),
             "json_chars": len(serialized),
             "approx_tokens": len(serialized) // APPROX_CHARS_PER_TOKEN,
             "per_backend_chars": dict(sorted(per_backend.items())),

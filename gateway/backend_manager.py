@@ -530,7 +530,6 @@ class BackendManager:
             )
             await asyncio.sleep(delay)
             state.status = BackendStatus.RESTARTING
-            state.last_restart_at = time.monotonic()
             try:
                 await self._start_one(state.name)
             except Exception as exc:
@@ -761,6 +760,7 @@ class BackendManager:
             raise
         state.client = client
         state.status = BackendStatus.RUNNING
+        state.last_restart_at = time.monotonic()
         state.consecutive_failures = 0
         state.warn_disabled_logged = False
         state.terminal_logged = False

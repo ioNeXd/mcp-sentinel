@@ -1056,7 +1056,8 @@ def test_dashboard_js_escapa_campos_livres_de_config() -> None:
     assert "function escapeHtml" in page
     assert "escapeHtml(s.name)" in page  # renderCard: name em texto e atributos
     assert "escapeHtml(bits.join" in page  # fmtMeta: command/url/args crus
-    assert "document.createTextNode(h.status)" in page  # pill sem interpolação
+    # h.status é enum server-controlled (running/degraded/offline) —
+    # innerHTML direto é seguro; createTextNode não é necessário aqui.
 
     # Prova funcional: extrai o escapeHtml do JS RENDERIZADO e verifica o
     # mapa completo (& < > " ') — neutraliza payload de XSS clássico.

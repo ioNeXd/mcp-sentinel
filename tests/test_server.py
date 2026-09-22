@@ -507,7 +507,9 @@ async def test_tools_list_size_com_item_omitido_nao_desalinha_por_backend() -> N
         payload = server.tools_list_size()
         # 2 tools válidas dos backends + a tool nativa gateway.diagnose,
         # sempre presente no tools/list real (ver DIAGNOSTIC_TOOL_PAYLOAD).
-        assert payload["tools_count"] == 4
+        # tools_count usa len(pairs), não len(entries) — items com metadata
+        # inválida (description=42) são filtrados de pairs mas contavam em entries.
+        assert payload["tools_count"] == 3
         assert set(payload["per_backend_chars"]) == {
             "backend-a",
             "backend-b",
