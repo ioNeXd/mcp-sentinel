@@ -2516,7 +2516,7 @@ def create_app(
         )
 
     @app.get("/api/logs/stream")
-    async def logs_stream(request: Request) -> StreamingResponse:
+    async def logs_stream(request: Request) -> Response:
         """Console de logs ao vivo do dashboard (Fase 7) — Server-Sent Events.
 
         Mesma exceção de auth que a rota ``/`` (aceita ``?token=`` além do

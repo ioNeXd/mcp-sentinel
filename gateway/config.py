@@ -37,6 +37,8 @@ MAX_HEALTH_CHECK_INTERVAL_SECONDS = 86_400.0
 MAX_BACKEND_REQUEST_TIMEOUT_SECONDS = 86_400.0
 MAX_RESTART_ATTEMPTS = 1_000
 MAX_SESSION_TTL_SECONDS = 30 * 86_400.0
+DEFAULT_MAX_SESSIONS = 256
+MAX_SESSIONS_LIMIT = 10_000
 
 # Nomes permitidos em header field-name conforme RFC 7230 (token).
 _HEADER_NAME_TOKEN = re.compile(r"^[!#$%&'*+\-.^_|~0-9A-Za-z]+$")
@@ -243,6 +245,15 @@ class GatewayConfig(BaseModel):
             "Tempo de vida (s) de uma sessão do filtro seletivo de backends sem"
             " atividade (Fase 5). A cada request com o mesmo Mcp-Session-Id o TTL"
             " é renovado; expirada, a sessão volta a ver todos os backends."
+        ),
+    )
+    max_sessions: int = Field(
+        default=DEFAULT_MAX_SESSIONS,
+        gt=0,
+        le=MAX_SESSIONS_LIMIT,
+        description=(
+            "Teto de sessões simultâneas do filtro seletivo (Fase 5)."
+            " Ao lotar, a sessão com deadline mais antigo é descartada."
         ),
     )
 

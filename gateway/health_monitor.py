@@ -92,7 +92,7 @@ class HealthMonitor:
         """
         try:
             await asyncio.wait_for(
-                self.manager.registries[0].list_all(),  # I/O mínimo
+                asyncio.to_thread(self.manager.registries[0].list_all),  # sync → awaitable via to_thread
                 timeout=3.0,
             )
         except asyncio.TimeoutError:

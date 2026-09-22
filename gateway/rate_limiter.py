@@ -11,6 +11,7 @@ Uso:
 
 import time
 from collections import defaultdict, deque
+from typing import Callable
 
 
 class RateLimiter:
@@ -26,7 +27,7 @@ class RateLimiter:
         self,
         max_requests: int,
         window_seconds: float,
-        clock: callable = time.monotonic,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.max_requests = max_requests
         self.window_seconds = window_seconds

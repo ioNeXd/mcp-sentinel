@@ -53,6 +53,8 @@ from typing import Callable
 
 import structlog
 
+from gateway.config import DEFAULT_MAX_SESSIONS
+
 logger = structlog.get_logger(__name__)
 
 PURGE_EVERY_N_WRITES = 32
@@ -61,10 +63,6 @@ PURGE_EVERY_N_WRITES = 32
 PURGE_INTERVAL_SECONDS = 300.0
 """Intervalo máximo entre purgas oportunistas e período do loop do  
 ``SessionPurger``: uma constante só, duas frentes de limpeza no mesmo ritmo."""
-
-DEFAULT_MAX_SESSIONS = 256
-"""Teto de sessões simultâneas: cada entrada é um par (frozenset, float), então  
-256 sessões ocupam poucos KB — um teto generoso que só reage a abuso."""
 
 MAX_SESSION_ID_LENGTH = 128
 """Tamanho máximo de um session_id: é chave de dict e aparece em logs  
