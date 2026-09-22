@@ -178,8 +178,12 @@ async def main() -> int:
     try:
         await mcp_server.start()
     except BackendError as exc:
-        logger.error("falha ao iniciar os backends", error=str(exc))
-        return 1
+        # Gateway sobe mesmo sem backends — modo degradado.
+        # Health monitor tenta restart automático (auto_restart=true).
+        logger.warning(
+            "backends_falharam_modo_degradado",
+            detail=str(exc),
+        )
     except Exception:
         await backend_manager.stop_all()
         logger.exception("falha inesperada ao iniciar os backends")
