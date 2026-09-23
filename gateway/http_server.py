@@ -77,6 +77,33 @@ APP_VERSION = __version__
 # evitar perda de escritas simultâneas.
 _config_write_lock = asyncio.Lock()
 
+async def _write_config_atomic(config_path: str, new_data: dict) -> None:
+    """Grava ``new_data`` no config de forma atômica e em thread separada.
+
+    Backup + tmp + replace rodando em ``asyncio.to_thread`` — não bloqueia
+    o event loop. Erro de I/O propaga como ``OSError``.
+    """
+    def _sync_write():
+        _backup_config(config_path)
+        tmp_path = f"{config_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(new_data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp_path, config_path)
+    await asyncio.to_thread(_sync_write)
+
+def _load_config_file(config_path: str) -> dict:
+    """Lê config.json como dict. OSError/JSONDecodeError propagam —
+    chamador decide como responder (as rotas distinguem os casos)."""
+    with open(config_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _read_config_file_text(config_path: str) -> str:
+    """Lê config.json como texto bruto. OSError propaga."""
+    with open(config_path, "r", encoding="utf-8") as f:
+        return f.read()
+
 # Rate limiter para /api/logs/stream (10 conn/min por IP)
 _log_stream_limiter = RateLimiter(max_requests=10, window_seconds=60)
 
@@ -2287,11 +2314,7 @@ def create_app(
             logger.info("http_auth_rejected", route="/api/config/export")
             return _unauthorized()
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_text = f.read()
-        except OSError as exc:
-            return JSONResponse(status_code=500, content={"detail": f"falha ao ler config: {exc}"})
+        raw_text = await asyncio.to_thread(_read_config_file_text, config_path)
         return Response(content=raw_text, media_type="application/json")
 
     @app.post("/api/config/import")
@@ -2319,13 +2342,8 @@ def create_app(
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         async with _config_write_lock:
-            _backup_config(config_path)
-            tmp_path = f"{config_path}.tmp"
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
-                os.replace(tmp_path, config_path)
+                await _write_config_atomic(config_path, payload)
             except OSError as exc:
                 return JSONResponse(
                     status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
@@ -2366,8 +2384,10 @@ def create_app(
         # de escrita falha) preserva o caminho de recuperação pelo painel.
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_disk = json.load(f)
+            raw_disk = await asyncio.to_thread(_load_config_file, config_path)
+        except (OSError, json.JSONDecodeError):
+            pass
+        else:
             disk_backends = raw_disk.get("backends", []) if isinstance(raw_disk, dict) else []
             if len(disk_backends) == 1 and disk_backends[0].get("name") == name:
                 return JSONResponse(
@@ -2379,8 +2399,6 @@ def create_app(
                         )
                     },
                 )
-        except (OSError, json.JSONDecodeError):
-            pass
         try:
             await mcp_server.backend_manager.remove_backend(name)
         except BackendError as exc:
@@ -2390,19 +2408,13 @@ def create_app(
             return JSONResponse(status_code=500, content={"detail": "Internal error"})
         try:
             async with _config_write_lock:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    raw_config = json.load(f)
+                raw_config = await asyncio.to_thread(_load_config_file, config_path)
                 backends = raw_config.get("backends", [])
                 new_backends = [b for b in backends if b.get("name") != name]
                 if len(new_backends) != len(backends):
                     raw_config["backends"] = new_backends
-                    _backup_config(config_path)
-                    tmp_path = f"{config_path}.tmp"
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        json.dump(raw_config, f, indent=2, ensure_ascii=False)
-                        f.write("\n")
-                    os.replace(tmp_path, config_path)
-        except (OSError, json.JSONDecodeError) as exc:
+                    await _write_config_atomic(config_path, raw_config)
+        except OSError as exc:
             # O backend já foi removido em memória (passo 1 não é desfeito);
             # só avisa que o arquivo em disco não pôde ser atualizado.
             logger.warning("backend_remove_config_write_failed", backend=name, error=str(exc))
@@ -2440,8 +2452,7 @@ def create_app(
             return _unauthorized()
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_config = json.load(f)
+            raw_config = await asyncio.to_thread(_load_config_file, config_path)
         except FileNotFoundError:
             return JSONResponse(
                 status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
@@ -2474,8 +2485,7 @@ def create_app(
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_config = json.load(f)
+            raw_config = await asyncio.to_thread(_load_config_file, config_path)
         except FileNotFoundError:
             return JSONResponse(
                 status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
@@ -2496,13 +2506,8 @@ def create_app(
             )
 
         async with _config_write_lock:
-            _backup_config(config_path)
-            tmp_path = f"{config_path}.tmp"
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(updated, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
-                os.replace(tmp_path, config_path)
+                await _write_config_atomic(config_path, updated)
             except OSError as exc:
                 return JSONResponse(
                     status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
@@ -2524,11 +2529,7 @@ def create_app(
             logger.info("http_auth_rejected", route="/api/config/backup")
             return _unauthorized()
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_text = f.read()
-        except OSError as exc:
-            return JSONResponse(status_code=500, content={"detail": f"falha ao ler config: {exc}"})
+        raw_text = await asyncio.to_thread(_read_config_file_text, config_path)
         return Response(content=raw_text, media_type="application/json")
 
     @app.post("/api/config/restore")
@@ -2559,13 +2560,8 @@ def create_app(
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         async with _config_write_lock:
-            _backup_config(config_path)
-            tmp_path = f"{config_path}.tmp"
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
-                os.replace(tmp_path, config_path)
+                await _write_config_atomic(config_path, payload)
             except OSError as exc:
                 return JSONResponse(
                     status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
@@ -2668,8 +2664,7 @@ def create_app(
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_config = json.load(f)
+            raw_config = await asyncio.to_thread(_load_config_file, config_path)
         except FileNotFoundError:
             return JSONResponse(
                 status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
@@ -2710,13 +2705,8 @@ def create_app(
                     },
                 )
             async with _config_write_lock:
-                _backup_config(config_path)
-                tmp_path = f"{config_path}.tmp"
                 try:
-                    with open(tmp_path, "w", encoding="utf-8") as f:
-                        json.dump(raw_config, f, indent=2, ensure_ascii=False)
-                        f.write("\n")
-                    os.replace(tmp_path, config_path)
+                    await _write_config_atomic(config_path, raw_config)
                 except OSError as exc:
                     return JSONResponse(
                         status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
@@ -2792,8 +2782,7 @@ def create_app(
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
 
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                raw_config = json.load(f)
+            raw_config = await asyncio.to_thread(_load_config_file, config_path)
         except FileNotFoundError:
             return JSONResponse(
                 status_code=500,
@@ -2824,13 +2813,8 @@ def create_app(
         backends.append(entry)
 
         async with _config_write_lock:
-            _backup_config(config_path)
-            tmp_path = f"{config_path}.tmp"
             try:
-                with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(raw_config, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
-                os.replace(tmp_path, config_path)
+                await _write_config_atomic(config_path, raw_config)
             except OSError as exc:
                 return JSONResponse(
                     status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
