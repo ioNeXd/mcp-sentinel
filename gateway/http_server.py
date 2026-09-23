@@ -439,6 +439,18 @@ body.density-compact .card .meta { display: none; }
 """
 
 
+def safe_json_for_script(value: str | None) -> str:
+    """Serializa para JSON e torna seguro dentro de <script>.
+
+    json.dumps escapa \" e \n mas NÃO escapa ``<``, ``>`` nem ``/``.
+    Um token com ``</script>`` quebraria o fechamento do script.
+    Pós-escapa os caracteres que fecham tag para garantir que o
+    conteúdo nunca escapa do ``<script>`` — mesmo com um token
+    malicioso ou mal formatado pelo operador.
+    """
+    return json.dumps(value).replace("<", "\\u003c").replace(">", "\\u003e")
+
+
 def _render_dashboard(
     summary: dict[str, Any],
     servers: list[dict[str, Any]],
@@ -454,9 +466,10 @@ def _render_dashboard(
     ``fetch`` POST, e o console de logs ao vivo via ``EventSource`` em
     ``/api/logs/stream``. Todo valor dinâmico do HTML inicial passa por
     ``html.escape``; o token (se houver) é embutido como uma constante JS
-    via ``json.dumps`` (``None`` vira ``null``, string vira literal escapado —
-    seguro dentro de ``<script>``), usado só para o próprio navegador
-    reautenticar suas chamadas — nunca logado, nunca em outro lugar do HTML.
+    via ``safe_json_for_script`` (``json.dumps`` + pós-escape de ``<``/``>`` —
+    ``json.dumps`` sozinho não é seguro dentro de ``<script>``), usado só
+    para o próprio navegador reautenticar suas chamadas — nunca logado,
+    nunca em outro lugar do HTML.
 
     ``gw_endpoint`` é a URL do próprio ``POST /mcp`` deste Gateway, calculada
     pelo chamador a partir do host:porta que o navegador já usou pra abrir o
@@ -469,7 +482,7 @@ def _render_dashboard(
     res_count = summary.get("resources_count", 0)
     prompt_count = summary.get("prompts_count", 0)
     cards_html = _render_backend_cards(servers)
-    token_js = json.dumps(token)
+    token_js = safe_json_for_script(token)
     gw_endpoint_safe = html.escape(gw_endpoint)
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1675,7 +1688,7 @@ def _render_backend_detail(
     status = str(state_detail.get("status", "?"))
     status_safe = html.escape(status)
     status_raw = status.lower()
-    token_js = json.dumps(token)
+    token_js = safe_json_for_script(token)
     connected_since = state_detail.get("connected_since")
     uptime_html = ""
     if connected_since:
