@@ -113,7 +113,10 @@ class StdioClient(BaseClient):
                     try:
                         await asyncio.wait_for(process.wait(), timeout=STOP_GRACE_SECONDS)
                     except asyncio.TimeoutError:
-                        process.kill()
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
                         await process.wait()
             tasks = [task for task in (self._reader_task, self._stderr_task) if task is not None]
             for task in tasks:
@@ -147,13 +150,14 @@ class StdioClient(BaseClient):
 
     async def send_request(self, method: str, params: dict[str, Any] | None = None) -> Any:
         """Envia um request JSON-RPC e aguarda a resposta correlacionada por id."""
-        if self._closed or self._process is None or self._process.returncode is not None:
-            raise BackendDisconnectedError(
-                f"backend '{self._config.name}': processo não está em execução"
-            )
         self._next_id += 1
         request_id = self._next_id
         future = self._register_pending(request_id)
+        if self._closed or self._process is None or self._process.returncode is not None:
+            self._pop_pending(request_id)
+            raise BackendDisconnectedError(
+                f"backend '{self._config.name}': processo não está em execução"
+            )
         try:
             await self._write(
                 {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params or {}}
@@ -189,7 +193,8 @@ class StdioClient(BaseClient):
         inesperado marca ``_reader_failed`` ANTES de logar, para que is_alive()
         já reporte False e o Health Monitor reaja.
         """
-        assert self._process is not None and self._process.stdout is not None
+        if self._process is None or self._process.stdout is None:
+            return
         try:
             while True:
                 line = await self._process.stdout.readline()
@@ -254,7 +259,8 @@ class StdioClient(BaseClient):
         ruído que parece problema mas não é. O fim ANORMAL do processo é que
         vira warning/error (detecção de queda, ver ``is_alive``).
         """
-        assert self._process is not None and self._process.stderr is not None
+        if self._process is None or self._process.stderr is None:
+            return
         try:
             async for line in self._process.stderr:
                 logger.info(

@@ -63,14 +63,14 @@ def _auth_headers(token: str = "test-token-123") -> dict[str, str]:
 
 
 class TestHealth:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_health_no_auth(self, app):
         async with _client(app) as c:
             r = await c.get("/health")
         assert r.status_code == 200
         assert "status" in r.json()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_health_always_accessible(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/health")
@@ -81,26 +81,26 @@ class TestHealth:
 
 
 class TestAuth:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_servers_without_token_returns_401(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/api/servers")
         assert r.status_code == 401
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_servers_with_valid_token(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/api/servers", headers={"Authorization": "Bearer test-token-123"})
         assert r.status_code == 200
         assert "servers" in r.json()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_servers_with_wrong_token_returns_401(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/api/servers", headers={"Authorization": "Bearer wrong"})
         assert r.status_code == 401
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_servers_no_auth_always_ok(self, app):
         async with _client(app) as c:
             r = await c.get("/api/servers")
@@ -111,14 +111,14 @@ class TestAuth:
 
 
 class TestDashboard:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_dashboard_returns_html(self, app):
         async with _client(app) as c:
             r = await c.get("/")
         assert r.status_code == 200
         assert "text/html" in r.headers["content-type"]
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_dashboard_no_auth_returns_401(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/")
@@ -129,7 +129,7 @@ class TestDashboard:
 
 
 class TestToolsSize:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_tools_size(self, app):
         async with _client(app) as c:
             r = await c.get("/api/tools/size")
@@ -140,13 +140,13 @@ class TestToolsSize:
 
 
 class TestShutdown:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_shutdown_without_server_returns_501(self, app):
         async with _client(app) as c:
             r = await c.post("/api/shutdown")
         assert r.status_code == 501
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_shutdown_with_mock_server(self, app):
         mock_server = MagicMock()
         mock_server.should_exit = False
@@ -204,7 +204,7 @@ class TestAutoBackup:
 
 
 class TestConnectivity:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_rejects_invalid_json(self, app):
         async with _client(app) as c:
             r = await c.post(
@@ -214,7 +214,7 @@ class TestConnectivity:
             )
         assert r.status_code == 400
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_rejects_bad_payload(self, app):
         async with _client(app) as c:
             r = await c.post(
@@ -224,7 +224,7 @@ class TestConnectivity:
             )
         assert r.status_code == 422
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_stdio_nonexistent_command(self, app):
         async with _client(app) as c:
             r = await c.post(
@@ -241,14 +241,9 @@ class TestConnectivity:
 # --- Export/Import config ---
 
 
-def _auth_headers(app):
-    """Extract auth headers from the app fixture if auth is configured."""
-    # app_auth fixture uses 'test-token-123'; app fixture uses None
-    return {}
-
 
 class TestConfigExportImport:
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_export_returns_json(self, app):
         async with _client(app) as c:
             r = await c.get("/api/config/export")
@@ -256,13 +251,13 @@ class TestConfigExportImport:
         data = r.json()
         assert "backends" in data
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_export_requires_auth(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.get("/api/config/export")
         assert r.status_code == 401
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_import_valid_config(self, app, tmp_path):
         valid = {
             "auth_token": None,
@@ -286,7 +281,7 @@ class TestConfigExportImport:
         assert r.status_code == 200
         assert "Importado" in r.json()["detail"] or "importado" in r.json()["detail"].lower()
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_import_rejects_invalid_config(self, app):
         async with _client(app) as c:
             r = await c.post(
@@ -295,7 +290,7 @@ class TestConfigExportImport:
             )
         assert r.status_code == 422
 
-    @pytest.mark.anyio
+    @pytest.mark.asyncio
     async def test_import_requires_auth(self, app_auth):
         async with _client(app_auth) as c:
             r = await c.post("/api/config/import", json={"backends": []})

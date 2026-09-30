@@ -190,13 +190,14 @@ class SseClient(BaseClient):
         backend morto: é tratada como desconexão (``_on_stream_closed``).
         """
         http = self._http
-        if self._stopped or not self._connected or http is None:
-            raise BackendDisconnectedError(
-                f"backend '{self._config.name}': stream SSE não está conectado"
-            )
         self._next_id += 1
         request_id = self._next_id
         future = self._register_pending(request_id)
+        if self._stopped or not self._connected or http is None:
+            self._pop_pending(request_id)
+            raise BackendDisconnectedError(
+                f"backend '{self._config.name}': stream SSE não está conectado"
+            )
         try:
             response = await http.post(
                 self._post_url,

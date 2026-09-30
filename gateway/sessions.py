@@ -170,6 +170,8 @@ class SessionFilter:
 
     def clear(self, session_id: str) -> None:
         """Remove o filtro da sessão (volta a ver todos os backends)."""
+        if not is_valid_session_id(session_id):
+            return
         self._sessions.pop(session_id, None)
         logger.info("session_filter_cleared", session_id=session_id)
 

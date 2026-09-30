@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
-from conftest import capture_structlog_events, spawn_fake_server, stop_fake_server
+from conftest import FAKE_HTTP_BACKEND_PATH, capture_structlog_events, spawn_fake_server, stop_fake_server
 from gateway.clients.http_client import HttpClient
 from gateway.config import BackendConfig
 from gateway.errors import (
@@ -21,7 +21,7 @@ from gateway.errors import (
 @pytest.fixture
 def http_backend():
     """Fake HTTP num subprocesso; derrubado no fim do teste."""
-    port, process = spawn_fake_server(__import__("conftest").FAKE_HTTP_BACKEND_PATH)
+    port, process = spawn_fake_server(FAKE_HTTP_BACKEND_PATH)
     yield f"http://127.0.0.1:{port}"
     stop_fake_server(process)
 

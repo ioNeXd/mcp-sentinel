@@ -46,3 +46,16 @@ class RateLimiter:
             return False
         window.append(now)
         return True
+
+    def cleanup(self) -> int:
+        """Remove chaves com janelas expiradas. Devolve quantas foram removidas."""
+        now = self._clock()
+        cutoff = now - self.window_seconds
+        empty = [
+            key
+            for key, window in self._windows.items()
+            if not window or window[-1] <= cutoff
+        ]
+        for key in empty:
+            del self._windows[key]
+        return len(empty)

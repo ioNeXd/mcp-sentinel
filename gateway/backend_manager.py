@@ -489,7 +489,9 @@ class BackendManager:
             raise
         except Exception:
             logger.exception("erro inesperado no restart do backend", backend=name)
-            state = self._states[name]
+            state = self._states.get(name)
+            if state is None:
+                return
             state.status = BackendStatus.OFFLINE
             state.consecutive_failures += 1
         finally:
@@ -751,7 +753,7 @@ class BackendManager:
             self.registries[0].register(name, tools)
             self.registries[1].register(name, resources)
             self.registries[2].register(name, prompts)
-        except BaseException:
+        except Exception:
             self._unregister(name)
             try:
                 await client.stop()

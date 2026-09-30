@@ -1750,7 +1750,7 @@ def _render_backend_detail(
         <div class="value">{html.escape(str(value))}</div>
       </div>"""
 
-    def render_items(kind_entries: list[Any], id_field: str) -> str:
+    def render_items(kind_entries: list[Any]) -> str:
         if not kind_entries:
             return '<div class="empty">Nenhum item.</div>'
         sorted_entries = sorted(kind_entries, key=lambda e: e.name.lower())
@@ -1768,9 +1768,9 @@ def _render_backend_detail(
             )
         return '<div class="item-list">' + "\n".join(items) + "</div>"
 
-    tools_html = render_items(entries.get("tools", []), "name")
-    resources_html = render_items(entries.get("resources", []), "uri")
-    prompts_html = render_items(entries.get("prompts", []), "name")
+    tools_html = render_items(entries.get("tools", []))
+    resources_html = render_items(entries.get("resources", []))
+    prompts_html = render_items(entries.get("prompts", []))
     is_disabled = status_raw == "disabled"
 
     return f"""<!DOCTYPE html>
@@ -2484,28 +2484,28 @@ def create_app(
             )
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
-        try:
-            raw_config = await asyncio.to_thread(_load_config_file, config_path)
-        except FileNotFoundError:
-            return JSONResponse(
-                status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
-            )
-        except json.JSONDecodeError as exc:
-            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
-
-        updated = dict(raw_config)
-        for key in _SETTINGS_FIELDS:
-            if key in payload:
-                updated[key] = payload[key]
-
-        try:
-            GatewayConfig.model_validate(updated)
-        except ValidationError as exc:
-            return JSONResponse(
-                status_code=422, content={"detail": f"configuração inválida: {exc}"}
-            )
-
         async with _config_write_lock:
+            try:
+                raw_config = await asyncio.to_thread(_load_config_file, config_path)
+            except FileNotFoundError:
+                return JSONResponse(
+                    status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
+                )
+            except json.JSONDecodeError as exc:
+                return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
+
+            updated = dict(raw_config)
+            for key in _SETTINGS_FIELDS:
+                if key in payload:
+                    updated[key] = payload[key]
+
+            try:
+                GatewayConfig.model_validate(updated)
+            except ValidationError as exc:
+                return JSONResponse(
+                    status_code=422, content={"detail": f"configuração inválida: {exc}"}
+                )
+
             try:
                 await _write_config_atomic(config_path, updated)
             except OSError as exc:
@@ -2663,35 +2663,33 @@ def create_app(
             return JSONResponse(status_code=422, content={"detail": str(exc)})
 
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
-        try:
-            raw_config = await asyncio.to_thread(_load_config_file, config_path)
-        except FileNotFoundError:
-            return JSONResponse(
-                status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
-            )
-        except json.JSONDecodeError as exc:
-            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
+        async with _config_write_lock:
+            try:
+                raw_config = await asyncio.to_thread(_load_config_file, config_path)
+            except FileNotFoundError:
+                return JSONResponse(
+                    status_code=500, content={"detail": f"config não encontrado em '{config_path}'"}
+                )
+            except json.JSONDecodeError as exc:
+                return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
 
-        existing_backends = raw_config.setdefault("backends", [])
-        existing_names = {s["name"] for s in mcp_server.backend_manager.server_details()} | {
-            b.get("name") for b in existing_backends
-        }
-        added: list[str] = []
-        skipped: list[str] = []
-        for backend in imported["backends"]:
-            if backend["name"] in existing_names:
-                skipped.append(backend["name"])
-                continue
-            existing_backends.append(backend)
-            existing_names.add(backend["name"])
-            added.append(backend["name"])
+            existing_backends = raw_config.setdefault("backends", [])
+            existing_names = {s["name"] for s in mcp_server.backend_manager.server_details()} | {
+                b.get("name") for b in existing_backends
+            }
+            added: list[str] = []
+            skipped: list[str] = []
+            for backend in imported["backends"]:
+                if backend["name"] in existing_names:
+                    skipped.append(backend["name"])
+                    continue
+                existing_backends.append(backend)
+                existing_names.add(backend["name"])
+                added.append(backend["name"])
 
         if added:
-            # MESMO portão do restore/settings: o resultado mesclado tem que
-            # passar pelo MESMO schema que o load_config exige no boot, ANTES
-            # de gravar — sem isso, entrada importada que o convert_entry não
-            # consegue checar (url sem host, headers não-string...) iria para
-            # o config.json real e quebraria o próximo boot.
+            # Already inside _config_write_lock (acquired above for read+mutate).
+            # Validate + write without re-acquiring the lock.
             try:
                 GatewayConfig.model_validate(raw_config)
             except ValidationError as exc:
@@ -2704,13 +2702,12 @@ def create_app(
                         )
                     },
                 )
-            async with _config_write_lock:
-                try:
-                    await _write_config_atomic(config_path, raw_config)
-                except OSError as exc:
-                    return JSONResponse(
-                        status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
-                    )
+            try:
+                await _write_config_atomic(config_path, raw_config)
+            except OSError as exc:
+                return JSONResponse(
+                    status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+                )
 
         logger.info(
             "claude_desktop_imported",
@@ -2781,38 +2778,38 @@ def create_app(
         name = payload["name"].strip()
         config_path = os.environ.get("MCP_GATEWAY_CONFIG", "config/config.json")
 
-        try:
-            raw_config = await asyncio.to_thread(_load_config_file, config_path)
-        except FileNotFoundError:
-            return JSONResponse(
-                status_code=500,
-                content={"detail": f"config não encontrado em '{config_path}'"},
-            )
-        except json.JSONDecodeError as exc:
-            return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
-
-        backends = raw_config.setdefault("backends", [])
-        in_memory_names = {s["name"] for s in mcp_server.backend_manager.server_details()}
-        on_disk_names = {b.get("name") for b in backends}
-        if name in in_memory_names or name in on_disk_names:
-            return JSONResponse(
-                status_code=409, content={"detail": f"já existe um backend chamado '{name}'"}
-            )
-
-        entry = _build_backend_entry(payload)
-        try:
-            backend_config = BackendConfig(**entry)
-        except ValidationError as exc:
-            # Fonte única de verdade: o MESMO schema que o load_config usa no
-            # boot decide aqui, ANTES da gravação — nenhum caminho desta rota
-            # deixa no config.json uma entrada que o próximo boot rejeitaria.
-            return JSONResponse(
-                status_code=422,
-                content={"detail": f"entrada rejeitada pelo schema do config: {exc}"},
-            )
-        backends.append(entry)
-
         async with _config_write_lock:
+            try:
+                raw_config = await asyncio.to_thread(_load_config_file, config_path)
+            except FileNotFoundError:
+                return JSONResponse(
+                    status_code=500,
+                    content={"detail": f"config não encontrado em '{config_path}'"},
+                )
+            except json.JSONDecodeError as exc:
+                return JSONResponse(status_code=500, content={"detail": f"config.json inválido: {exc}"})
+
+            backends = raw_config.setdefault("backends", [])
+            in_memory_names = {s["name"] for s in mcp_server.backend_manager.server_details()}
+            on_disk_names = {b.get("name") for b in backends}
+            if name in in_memory_names or name in on_disk_names:
+                return JSONResponse(
+                    status_code=409, content={"detail": f"já existe um backend chamado '{name}'"}
+                )
+
+            entry = _build_backend_entry(payload)
+            try:
+                backend_config = BackendConfig(**entry)
+            except ValidationError as exc:
+                # Fonte única de verdade: o MESMO schema que o load_config usa no
+                # boot decide aqui, ANTES da gravação — nenhum caminho desta rota
+                # deixa no config.json uma entrada que o próximo boot rejeitaria.
+                return JSONResponse(
+                    status_code=422,
+                    content={"detail": f"entrada rejeitada pelo schema do config: {exc}"},
+                )
+            backends.append(entry)
+
             try:
                 await _write_config_atomic(config_path, raw_config)
             except OSError as exc:

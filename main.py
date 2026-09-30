@@ -83,7 +83,6 @@ def _install_sigbreak_handler(server: uvicorn.Server) -> None:
 
 async def _watch_config(
     config_path: Path,
-    backend_manager: BackendManager,
     session_filter: SessionFilter,
 ) -> None:
     """Hot-reload: monitora mtime do config.json e aplica mudanças.
@@ -93,8 +92,6 @@ async def _watch_config(
     Backends adicionados/removidos no config.json não são tratados aqui
     (requer restart) — só settings de runtime.
     """
-    from gateway.config import load_config
-
     last_mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
     logger.info("config_watcher_started", path=str(config_path))
     while True:
@@ -167,7 +164,8 @@ async def main() -> int:
         if host not in ("127.0.0.1", "localhost", "::1"):
             logger.warning(
                 "auth_token definido mas servidor exposto sem HTTPS — tokens em query string "
-                "(?token=) vazam em logs de proxy e histórico de navegador. Use TLS ou restrinja "
+                "(?token=) vazam em logs de proxy e histórico de navegador. "
+                "Use TLS ou restrinja "
                 "a 127.0.0.1 para uso local seguro.",
                 host=host,
             )
@@ -201,7 +199,6 @@ async def main() -> int:
     config_watcher_task = asyncio.create_task(
         _watch_config(
             config_path=config_path,
-            backend_manager=backend_manager,
             session_filter=session_filter,
         ),
         name="config-watcher",
