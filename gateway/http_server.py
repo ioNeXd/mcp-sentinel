@@ -2687,27 +2687,27 @@ def create_app(
                 existing_names.add(backend["name"])
                 added.append(backend["name"])
 
-        if added:
-            # Already inside _config_write_lock (acquired above for read+mutate).
-            # Validate + write without re-acquiring the lock.
-            try:
-                GatewayConfig.model_validate(raw_config)
-            except ValidationError as exc:
-                return JSONResponse(
-                    status_code=422,
-                    content={
-                        "detail": (
-                            "importação bloqueada: o config resultante não passa no "
-                            f"schema do boot, nada foi gravado: {exc}"
-                        )
-                    },
-                )
-            try:
-                await _write_config_atomic(config_path, raw_config)
-            except OSError as exc:
-                return JSONResponse(
-                    status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
-                )
+            if added:
+                # Dentro de _config_write_lock (adquirido acima para ler+mesclar):
+                # validar e gravar sem re-adquirir o lock.
+                try:
+                    GatewayConfig.model_validate(raw_config)
+                except ValidationError as exc:
+                    return JSONResponse(
+                        status_code=422,
+                        content={
+                            "detail": (
+                                "importação bloqueada: o config resultante não passa no "
+                                f"schema do boot, nada foi gravado: {exc}"
+                            )
+                        },
+                    )
+                try:
+                    await _write_config_atomic(config_path, raw_config)
+                except OSError as exc:
+                    return JSONResponse(
+                        status_code=500, content={"detail": f"falha ao gravar config: {exc}"}
+                    )
 
         logger.info(
             "claude_desktop_imported",
