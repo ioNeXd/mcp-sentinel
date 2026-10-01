@@ -23,6 +23,7 @@ como se fossem um só — com um dashboard web para operar tudo pelo navegador.
 - [Importando do Claude Desktop](#importando-do-claude-desktop)  
 - [API HTTP](#api-http)  
 - [Filtro seletivo por sessão](#filtro-seletivo-por-sessão)  
+- [Arquitetura](#arquitetura)  
 - [Referência técnica](#referência-técnica)  
   - [Transportes](#transportes)  
   - [Ciclo de vida e auto-restart](#ciclo-de-vida-e-auto-restart)  
@@ -416,6 +417,38 @@ atividade e volta a ver tudo (nunca bloqueia). O filtro é apenas uma view: os
 registries globais seguem como fonte única de verdade. A tool nativa  
 `gateway.diagnose` não pertence a backend algum e permanece visível mesmo  
 com filtro ativo.  
+  
+---  
+  
+## Arquitetura  
+  
+O código é em camadas — regra central (ver `AGENTS.md`): acesso aos clients  
+sempre via `BackendManager`, nunca direto a um `Client`.  
+  
+- `main.py` — entrypoint: carrega o config (merge do `config.local.json`),  
+  sobe os backends, inicia o uvicorn e assiste o arquivo de config  
+  (hot-reload de `session_ttl_seconds` e `max_sessions`).  
+- `gateway/server.py` — camada de protocolo: valida o envelope JSON-RPC,  
+  despacha para os handlers; sem I/O direto além das chamadas aos backends.  
+- `gateway/backend_manager.py` — dono do ciclo de vida (start/stop/restart,  
+  registro atômico) e único caminho de acesso aos clients.  
+- `gateway/clients/` — transporte: `StdioClient`, `HttpClient`, `SseClient`.  
+- `gateway/registries/` — tools, resources e prompts (namespacing  
+  `backend.item`).  
+- `gateway/http_server.py` — dashboard + API REST + `POST /mcp` + stream de  
+  logs (SSE).  
+- `gateway/health_monitor.py` — ping periódico, detecção de queda,  
+  auto-restart com backoff e histórico em memória.  
+- `gateway/sessions.py` — sessões por cliente, TTL e filtro seletivo.  
+- `gateway/config.py` / `gateway/models.py` — schema pydantic e leitura  
+  validada do config (inclui o merge do `.local.json`).  
+- `rate_limiter.py`, `log_stream.py`, `logging.py`, `errors.py`,  
+  `version.py` — apoio; `scripts/import_claude_desktop_config.py` é o  
+  importador CLI.  
+  
+Fluxo de um request MCP: cliente → `POST /mcp` (auth) → sessão (`sessions.py`)  
+→ `server.py` (protocolo) → `BackendManager` → client → backend. Dashboard e  
+API REST seguem o mesmo caminho por baixo.  
   
 ---  
   
