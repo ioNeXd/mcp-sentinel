@@ -188,8 +188,9 @@ inválidas (ex.: `http` com `command`) são rejeitadas no boot com erro claro.
 | `session_ttl_seconds` | `3600` | TTL do [filtro por sessão](#filtro-seletivo-por-sessão). |  
   
 > **Nota:** o config de exemplo já vem com `auth_token: null` — clone e rode.  
-> Se definir um token, não commite o arquivo (use `config/config.local.json`,  
-> que está no `.gitignore`).  
+> Se definir um token, não commite o arquivo: crie `config/config.local.json`  
+> (no `.gitignore`) — ele é lido no boot e no hot-reload, e as chaves de topo  
+> dele sobrescrevem o `config/config.json` principal.  
   
 Exemplo de backend real stdio:  
   

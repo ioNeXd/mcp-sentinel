@@ -287,9 +287,32 @@ def load_config(path: Path) -> GatewayConfig:
     Toda falha de leitura, parse ou validação é convertida em ``ValueError`` com
     mensagem legível, de modo que o chamador (``main.py``) tenha um único tipo de
     exceção para tratar e nunca receba um ``pydantic.ValidationError`` cru.
+
+    Se existir um ``config.local.json`` ao lado do arquivo (mesmo diretório,
+    sufixo ``.local.json``), as chaves de topo dele sobrescrevem as do arquivo
+    principal — o caminho canônico para segredos como ``auth_token`` fora do
+    versionamento. O merge acontece ANTES da validação de schema, então um
+    local malformado (JSON inválido ou não-objeto) também vira ``ValueError``.
     """
+    raw = _read_config_json(path)
+    local_path = path.with_suffix(".local.json")
+    if local_path.exists():
+        local = _read_config_json(local_path)
+        if not isinstance(local, dict):
+            raise ValueError(f"config local {local_path}: esperado um objeto JSON")
+        if not isinstance(raw, dict):
+            raise ValueError(f"config {path}: esperado um objeto JSON")
+        raw = {**raw, **local}
     try:
-        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+        return GatewayConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"config.json inválido em {path}: {exc}") from exc
+
+
+def _read_config_json(path: Path) -> Any:
+    """Lê ``path`` como JSON, levantando ``ValueError`` com o path na mensagem."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise ValueError(f"arquivo de configuração não encontrado: {path}") from exc
     except json.JSONDecodeError as exc:
@@ -298,7 +321,3 @@ def load_config(path: Path) -> GatewayConfig:
         raise ValueError(f"config.json em {path} não é UTF-8 válido: {exc}") from exc
     except OSError as exc:
         raise ValueError(f"erro ao ler configuração em {path}: {exc}") from exc
-    try:
-        return GatewayConfig.model_validate(raw)
-    except ValidationError as exc:
-        raise ValueError(f"config.json inválido em {path}: {exc}") from exc

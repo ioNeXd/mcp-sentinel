@@ -138,3 +138,55 @@ def test_config_com_zero_backends_e_rejeitado() -> None:
     """
     with pytest.raises(ValidationError, match="ao menos um backend"):
         GatewayConfig(backends=[])
+
+
+def test_load_config_local_sobrescreve_auth_token(tmp_path) -> None:
+    """O config.local.json ao lado sobrescreve chaves de topo (auth_token fora do repo)."""
+    (tmp_path / "config.json").write_text(
+        '{"backends": [{"name": "a", "command": "python"}], "auth_token": null}',
+        encoding="utf-8",
+    )
+    (tmp_path / "config.local.json").write_text(
+        '{"auth_token": "segredo-local"}',
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path / "config.json")
+    assert config.auth_token == "segredo-local"
+
+
+def test_load_config_sem_local_comportamento_identico(tmp_path) -> None:
+    """Sem config.local.json o arquivo principal vale inteiro (regressão)."""
+    (tmp_path / "config.json").write_text(
+        '{"backends": [{"name": "a", "command": "python"}], "auth_token": null,'
+        ' "session_ttl_seconds": 600}',
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path / "config.json")
+    assert config.auth_token is None
+    assert config.session_ttl_seconds == 600
+
+
+def test_load_config_local_invalido_value_error(tmp_path) -> None:
+    """JSON malformado no local vira ValueError apontando o arquivo local."""
+    (tmp_path / "config.json").write_text(
+        '{"backends": [{"name": "a", "command": "python"}]}',
+        encoding="utf-8",
+    )
+    (tmp_path / "config.local.json").write_text("{quebrado", encoding="utf-8")
+    with pytest.raises(ValueError, match="config.local.json"):
+        load_config(tmp_path / "config.json")
+
+
+def test_load_config_local_backends_vencem(tmp_path) -> None:
+    """backends do local substituem a lista inteira (nao faz merge por nome)."""
+    (tmp_path / "config.json").write_text(
+        '{"backends": [{"name": "a", "command": "python"},'
+        ' {"name": "b", "command": "python"}]}',
+        encoding="utf-8",
+    )
+    (tmp_path / "config.local.json").write_text(
+        '{"backends": [{"name": "so-local", "command": "python"}]}',
+        encoding="utf-8",
+    )
+    config = load_config(tmp_path / "config.json")
+    assert [b.name for b in config.backends] == ["so-local"]

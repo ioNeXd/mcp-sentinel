@@ -332,9 +332,8 @@ def _isolate_real_config(tmp_path, monkeypatch):
     continuam enxergando o mesmo conteudo, mas a escrita vai para o tmp.
     """
     real = ROOT / "config" / "config.json"
-    local = ROOT / "config" / "config.local.json"
     dst = tmp_path / "config.json"
     dst.write_bytes(real.read_bytes() if real.exists() else b'{"backends": []}')
-    if local.exists():
-        (tmp_path / "config.local.json").write_bytes(local.read_bytes())
+    # o config.local.json (auth_token real) NAO e copiado: agora que load_config
+    # o mescla, copiaria o segredo para dentro do ambiente de teste.
     monkeypatch.setenv("MCP_GATEWAY_CONFIG", str(dst))
