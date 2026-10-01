@@ -87,10 +87,11 @@ async def _watch_config(
 ) -> None:
     """Hot-reload: monitora mtime do config.json e aplica mudanças.
 
-    A cada 5s checa o mtime; se mudou, recarrega o arquivo e aplica
-    settings que podem mudar sem restart (auth_token, TTL, intervals).
-    Backends adicionados/removidos no config.json não são tratados aqui
-    (requer restart) — só settings de runtime.
+    A cada 5s checa o mtime; se mudou, recarrega o arquivo e aplica os
+    dois settings que mudam sem restart: session_ttl_seconds e
+    max_sessions. Os demais (auth_token, health_check_interval_seconds,
+    max_restart_attempts, backends) exigem restart: o auth_token é
+    capturado pelo create_app e backends/health são ciclos já iniciados.
     """
     last_mtime = config_path.stat().st_mtime if config_path.exists() else 0.0
     logger.info("config_watcher_started", path=str(config_path))

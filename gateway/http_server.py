@@ -2934,8 +2934,8 @@ def create_app(
                     )
                     + "\n"
                 )
-                proc.stdin.write(init_msg.encode())  # type: ignore
                 try:
+                    proc.stdin.write(init_msg.encode())  # type: ignore
                     raw = await _aio.wait_for(proc.stdout.readline(), timeout=10.0)  # type: ignore
                     elapsed = round((_time.monotonic() - start) * 1000)
                     if raw:
@@ -2950,13 +2950,13 @@ def create_app(
                         }
                     )
                 except _aio.TimeoutError:
-                    proc.kill()
                     return JSONResponse(
                         content={"ok": False, "detail": "timeout aguardando resposta (10s)"}
                     )
                 finally:
                     if proc.returncode is None:
                         proc.kill()
+                    await proc.wait()
             else:
                 # HTTP/SSE: tenta POST na url
                 url = payload["url"]

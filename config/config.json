@@ -8,12 +8,11 @@
   "session_ttl_seconds": 600,
   "backends": [
     {
-      "name": "imported-backend",
+      "name": "backend-teste",
       "type": "stdio",
       "command": "python",
       "args": [
-        "-c",
-        "print()"
+        "tests/fake_backend.py"
       ]
     }
   ]

@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterator
 
+import pytest
 import structlog
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -317,3 +318,23 @@ def make_manager_for_clients(
     manager = BackendManager(config, registries)
     manager._create_client = lambda backend_config: clients[backend_config.name]  # type: ignore[method-assign,return-value,union-attr]
     return manager, registries
+
+
+@pytest.fixture(autouse=True)
+def _isolate_real_config(tmp_path, monkeypatch):
+    """Nenhum teste toca o config.json real do repositorio.
+
+    Rotas de escrita (/api/config/import, /api/config/restore, DELETE
+    /api/servers, ...) resolvem o caminho via MCP_GATEWAY_CONFIG com fallback
+    em config/config.json; sem isolamento elas regravavam o config do repo a
+    cada run do pytest (o payload do teste de import era versionado por cima
+    do config real). Copia o config atual para um tmp por teste — os testes
+    continuam enxergando o mesmo conteudo, mas a escrita vai para o tmp.
+    """
+    real = ROOT / "config" / "config.json"
+    local = ROOT / "config" / "config.local.json"
+    dst = tmp_path / "config.json"
+    dst.write_bytes(real.read_bytes() if real.exists() else b'{"backends": []}')
+    if local.exists():
+        (tmp_path / "config.local.json").write_bytes(local.read_bytes())
+    monkeypatch.setenv("MCP_GATEWAY_CONFIG", str(dst))

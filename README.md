@@ -6,8 +6,9 @@ Um único ponto de entrada para todos os seus servidores MCP. O Sentinel
 inicia, agrega e monitora vários backends MCP (locais e remotos) e os expõe  
 como se fossem um só — com um dashboard web para operar tudo pelo navegador.  
   
-> **Status:** Fase 7 concluída. Dashboard interativo, controle de backends,  
-> filtro por sessão e importador de configs. Rode `pytest` para validar a suíte.  
+> **Status:** Dashboard interativo, controle de backends, filtro por sessão,  
+> gestão de config (settings/backup/restore/import), histórico por backend  
+> e teste de conectividade. Rode `pytest` para validar a suíte.  
   
 ---  
   
@@ -100,11 +101,24 @@ E permite **agir** direto na página:
   
 - **Restart / Disable / Enable** de cada backend, pelos botões do card.  
 - **+ Adicionar MCP**: um formulário que grava o novo backend no `config.json`  
-  e já tenta subi-lo na hora — sem reiniciar o Gateway.  
+  e já tenta subi-lo na hora — sem reiniciar o Gateway. O botão **Testar**  
+  (`POST /api/test-connectivity`) verifica a conexão (stdio handshake ou  
+  HTTP POST) antes de salvar.  
+- **Configurações** (`GET`/`PUT /api/config/settings): edita os campos globais  
+  do `config.json` com validação de schema antes de gravar (sem hot-reload:  
+  reinicie o Gateway para aplicar).  
+- **Backup / Restore / Export / Import**: baixa o `config.json` byte a byte,  
+  restaura a partir de um backup, ou exporta/importa um config inteiro — tudo  
+  validado contra o schema do boot antes de tocar o disco.  
+- **Importar do Claude Desktop** pela página: detecta o arquivo  
+  (`GET /api/import/claude-desktop/detect`) e mescla os backends convertidos  
+  (`POST /api/import/claude-desktop`).  
+- **Página de detalhe** (`GET /backend/{name}`): itens do backend e histórico  
+  de status/latência (`GET /api/servers/{name}/history`, em memória — zera no  
+  restart).  
+- **Sair do MCP**: desliga o Gateway com graceful shutdown (`POST /api/shutdown`).  
 - **Exportar snapshot**: baixa um JSON com `/health`, `/api/servers` e o  
   diagnóstico de tamanho das tools.  
-- **Somente leitura**: esconde os botões de ação (útil para deixar aberto sem  
-  risco de clique acidental; a preferência persiste entre recarregamentos).  
   
 O primeiro carregamento vem renderizado no servidor (sem tela em branco) e, a  
 partir daí, o JavaScript embutido assume o refresh e as ações. Não há build  
@@ -120,38 +134,30 @@ token. Como o navegador não envia header `Authorization`, acesse com
   
 O Gateway lê `config/config.json` (ou o caminho em `MCP_GATEWAY_CONFIG`):  
 
-## Config
-  
-O `config/config.json` versionado traz **apenas os backends de exemplo/  
-compartilhados** (`remoto`, `eventos`, `backend-teste`) e `auth_token: null`  
+O `config/config.json` versionado traz **apenas o backend de exemplo  
+(`backend-teste`, o fake stdio de `tests/fake_backend.py`)** e  
+`auth_token: null` (as entradas `remoto`/`eventos` do exemplo abaixo são  
+ilustração de formato — some daqui após editar o seu config).  
 
 ```json  
 {  
+  "auth_token": null,  
+  "max_payload_bytes": 1048576,  
+  "health_check_interval_seconds": 30,  
+  "backend_request_timeout_seconds": 30,  
+  "auto_restart": true,  
+  "max_restart_attempts": 3,  
+  "session_ttl_seconds": 600,  
   "backends": [  
     {  
-      "name": "remoto",  
-      "type": "http",  
-      "url": "http://127.0.0.1:9000"  
-    },  
-    {  
-      "name": "eventos",  
-      "type": "sse",  
-      "url": "http://127.0.0.1:9001"  
-    },  
-    {  
       "name": "backend-teste",  
+      "type": "stdio",  
       "command": "python",  
       "args": [  
         "tests/fake_backend.py"  
       ]  
     }  
-  ],  
-  "auth_token": null,  
-  "max_payload_bytes": 10485760,  
-  "health_check_interval_seconds": 5,  
-  "auto_restart": true,  
-  "max_restart_attempts": 5,  
-  "backend_request_timeout_seconds": 30  
+  ]  
 }  
 ```  
   
@@ -340,6 +346,36 @@ curl -X DELETE http://127.0.0.1:8080/api/servers/backend-a -H 'Authorization: Be
   
 Códigos: `404` inexistente · `409` estado incompatível (e último backend no  
 DELETE) · `503` a subida falhou · `401` sem token.  
+
+**Configurações** (mesma auth — só header Bearer, nunca query string):  
+
+- `GET /api/config/settings` · `PUT /api/config/settings` — campos globais  
+  editáveis pela página de Configurações; a gravação valida o arquivo  
+  inteiro contra `GatewayConfig` e responde que o reinício é necessário  
+  (hot-reload cobre só `session_ttl_seconds` e `max_sessions`).  
+- `GET /api/config/backup` · `GET /api/config/export` (alias) — o  
+  `config.json` bruto, byte a byte.  
+- `POST /api/config/restore` · `POST /api/config/import` (alias) —  
+  substitui o config inteiro; valida antes de gravar e faz backup prévio.  
+- `GET /api/import/claude-desktop/detect` ·  
+  `POST /api/import/claude-desktop` — detecta e mescla o config do Claude  
+  Desktop (clássico e MSIX no Windows, macOS/Linux).  
+- `POST /api/config/backends` — adiciona um backend ao config e sobe na  
+  hora (mesmo caminho do painel "+ Adicionar MCP").  
+- `POST /api/test-connectivity` — testa um backend antes de salvar  
+  (stdio: spawn + handshake initialize; http/sse: POST rápido).  
+- `POST /api/shutdown` — encerra o processo com graceful shutdown.  
+
+**Histórico e logs:**  
+
+- `GET /api/servers/{name}/history` — amostras de status/latência por  
+  ciclo do Health Monitor (em memória; lista vazia antes do primeiro ciclo).  
+- `GET /api/logs/stream` — console de logs via Server-Sent Events (aceita  
+  query string `?token=<seu_token>` como o dashboard, porque o EventSource do  
+  navegador não envia headers).  
+
+> Query string `?token=` só é aceita em `GET /`, `GET /backend/{name}` e  
+> `GET /api/logs/stream` — todo o resto da API exige header `Authorization`.  
   
 **Estados de um backend:** `running`, `offline` (caiu), `restarting`  
 (aguardando backoff), `failed` (esgotou as tentativas — terminal) e `disabled`  

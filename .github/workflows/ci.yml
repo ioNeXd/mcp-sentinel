@@ -22,7 +22,7 @@ jobs:
         with:  
           python-version: ${{ matrix.python-version }}  
       - run: python -m pip install -r requirements.txt  
-      - run: python -m pip install ruff mypy  
+      - run: python -m pip install ruff==0.16.8 mypy==2.3.1  
       # -v imprime cada nome de teste antes de rodar; método padrão (signal)  
       # reporta QUAL teste estourou o timeout (o thread mata o processo sem  
       # dizer qual foi). Um teste que passar de 60s falha com o nome no log.  
