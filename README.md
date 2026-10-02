@@ -73,12 +73,23 @@ Ao subir, o Gateway abre o **dashboard** no navegador automaticamente
 (`http://127.0.0.1:8080/`). O config de exemplo (`config/config.json`) já vem  
 pronto com um backend fake para você testar de imediato.  
   
-Alternativa — instale como CLI e rode de qualquer pasta:  
+Alternativa — instale como CLI e rode de qualquer pasta. Para usuário de  
+fora: clone o repositório (`git clone https://github.com/ioNeXd/mcp-sentinel.git`)  
+ou instale direto do GitHub sem clonar (requer `git` no PATH):  
   
 ```bash  
-pip install .  
+pip install .                                           # de dentro do clone  
+# ou, sem clonar:  
+pip install git+https://github.com/ioNeXd/mcp-sentinel.git  
+  
 sentinel  
 ```  
+  
+Em distribuições com Python "externally-managed" (PEP 668 — ex.: Debian e  
+Ubuntu recentes, Homebrew) o pip recusa instalação fora de venv: use o venv  
+do bloco acima ou `pip install --break-system-packages`. Dentro de um venv o  
+comando `sentinel` só resolve com o venv ativado (ou a pasta `Scripts`/`bin`  
+do venv no PATH).  
   
 Na primeira execução sem `config/config.json` no diretório atual, o Gateway  
 cria `~/.sentinel/config.json` com o backend `sample`  
