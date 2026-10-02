@@ -73,6 +73,21 @@ Ao subir, o Gateway abre o **dashboard** no navegador automaticamente
 (`http://127.0.0.1:8080/`). O config de exemplo (`config/config.json`) já vem  
 pronto com um backend fake para você testar de imediato.  
   
+Alternativa — instale como CLI e rode de qualquer pasta:  
+  
+```bash  
+pip install .  
+sentinel  
+```  
+  
+Na primeira execução sem `config/config.json` no diretório atual, o Gateway  
+cria `~/.sentinel/config.json` com o backend `sample`  
+(`gateway.sample_backend`) já conectado — tools e resources no dashboard  
+desde o primeiro run. `MCP_GATEWAY_CONFIG` continua vencendo quando definido.  
+No Windows o `pip` coloca o atalho `sentinel.exe` em  
+`%APPDATA%\Python\Python<versão>\Scripts`; adicione essa pasta ao PATH se o  
+comando não for encontrado.  
+  
 Variáveis de ambiente (opcionais):  
   
 | Variável | Default | Descrição |  

@@ -1,9 +1,18 @@
 """Testes do BackendType e da validação de backends por transporte (Fase 3)."""
 
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from gateway.config import BackendConfig, BackendType, GatewayConfig, load_config
+from gateway.config import (
+    BackendConfig,
+    BackendType,
+    GatewayConfig,
+    load_config,
+    resolve_config_path,
+)
 
 
 class TestBackendTypeValidation:
@@ -190,3 +199,54 @@ def test_load_config_local_backends_vencem(tmp_path) -> None:
     )
     config = load_config(tmp_path / "config.json")
     assert [b.name for b in config.backends] == ["so-local"]
+
+
+class TestResolveConfigPath:
+    """CLI pip: env vence, cwd do repo vence, senão cria ~/.sentinel/config.json."""
+
+    def test_env_vence_sobre_cwd_e_home(self, tmp_path, monkeypatch) -> None:
+        """MCP_GATEWAY_CONFIG explícito retorna como está (load_config reporta se faltar)."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "config").mkdir()
+        (tmp_path / "config" / "config.json").write_text('{"backends": []}', encoding="utf-8")
+        env = tmp_path / "custom" / "cfg.json"
+        assert resolve_config_path(str(env), home=tmp_path / "home") == env
+
+    def test_cwd_do_repo_vence_sobre_home(self, tmp_path, monkeypatch) -> None:
+        """Fluxo dev: config/config.json no cwd é usado sem tocar no ~/.sentinel."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "config").mkdir()
+        repo_cfg = tmp_path / "config" / "config.json"
+        repo_cfg.write_text('{"backends": []}', encoding="utf-8")
+        home = tmp_path / "home"
+        assert resolve_config_path(None, home=home) == Path("config/config.json")
+        assert not home.exists()
+
+    def test_primeira_execucao_cria_config_valido(self, tmp_path, monkeypatch) -> None:
+        """Sem cwd config: cria ~/.sentinel/config.json com o backend sample pronto."""
+        monkeypatch.chdir(tmp_path)  # cwd sem config/config.json
+        home = tmp_path / "home"
+        path = resolve_config_path(None, home=home)
+        assert path == home / ".sentinel" / "config.json"
+        assert path.is_file()
+        config = load_config(path)
+        assert len(config.backends) == 1
+        sample = config.backends[0]
+        assert sample.name == "sample"
+        assert sample.command == sys.executable
+        assert sample.args == ["-m", "gateway.sample_backend"]
+
+    def test_segunda_chamada_nao_sobrescreve(self, tmp_path, monkeypatch) -> None:
+        """Resolução é idempotente: edits do usuário no config nunca são recriados por cima."""
+        monkeypatch.chdir(tmp_path)
+        home = tmp_path / "home"
+        path = resolve_config_path(None, home=home)
+        path.write_text(
+            '{"backends": [{"name": "meu", "command": "python"}],'
+            ' "max_payload_bytes": 1024}',
+            encoding="utf-8",
+        )
+        assert resolve_config_path(None, home=home) == path
+        config = load_config(path)
+        assert config.backends[0].name == "meu"
+        assert config.max_payload_bytes == 1024

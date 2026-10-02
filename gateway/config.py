@@ -11,6 +11,7 @@ que o restante do Gateway pode assumir uma configuração já íntegra.
 
 import json
 import re
+import sys
 import warnings
 from collections import Counter
 from enum import Enum
@@ -281,6 +282,51 @@ class GatewayConfig(BaseModel):
         return self
 
 
+DEFAULT_CONFIG_PATH = "config/config.json"
+USER_CONFIG_DIR = ".sentinel"
+
+
+def resolve_config_path(env_value: str | None = None, *, home: Path | None = None) -> Path:
+    """Resolve onde deve estar o ``config.json`` (CLI ``sentinel`` instalado via pip).
+
+    Ordem de precedência, do mais explícito ao mais implícito:
+
+    1. ``env_value`` (``MCP_GATEWAY_CONFIG``): caminho do chamador — se não
+       existir, ``load_config`` reporta o erro normalmente (nada é criado).
+    2. ``./config/config.json`` (cwd): fluxo de desenvolvimento no repositório,
+       idêntico ao comportamento anterior.
+    3. ``~/.sentinel/config.json``: no primeiro run o arquivo ainda não existe
+       — é criado com um ``GatewayConfig`` cujo backend ``sample`` é o módulo
+       embarcado ``gateway.sample_backend`` (o fake stdio de demo), partindo
+       do ``sys.executable`` da própria instalação. Assim o Gateway sobe com um
+       backend saudável de exemplo — o schema exige ao menos um backend — e o
+       usuário adiciona seus MCPs pelo dashboard.
+
+    ``home`` existe só para teste (permite apontar para um diretório temporário
+    sem depender do HOME real do usuário).
+    """
+    if env_value:
+        return Path(env_value)
+    local = Path(DEFAULT_CONFIG_PATH)
+    if local.is_file():
+        return local
+    user = (home or Path.home()) / USER_CONFIG_DIR / "config.json"
+    if not user.is_file():
+        user.parent.mkdir(parents=True, exist_ok=True)
+        default = GatewayConfig(
+            backends=[
+                BackendConfig(
+                    name="sample",
+                    type=BackendType.STDIO,
+                    command=sys.executable,
+                    args=["-m", "gateway.sample_backend"],
+                )
+            ]
+        )
+        user.write_text(default.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    return user
+
+
 def load_config(path: Path) -> GatewayConfig:
     """Carrega e valida o ``config.json``, sempre levantando ``ValueError`` em falha.
 
@@ -293,6 +339,10 @@ def load_config(path: Path) -> GatewayConfig:
     principal — o caminho canônico para segredos como ``auth_token`` fora do
     versionamento. O merge acontece ANTES da validação de schema, então um
     local malformado (JSON inválido ou não-objeto) também vira ``ValueError``.
+
+    O caminho deve vir de ``resolve_config_path`` no modo aplicação
+    (``main.py``) para que o CLI ``sentinel`` instalado via pip funcione de
+    qualquer diretório.
     """
     raw = _read_config_json(path)
     local_path = path.with_suffix(".local.json")

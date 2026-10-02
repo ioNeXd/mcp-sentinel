@@ -33,7 +33,7 @@ import structlog
 import uvicorn
 
 from gateway.backend_manager import BackendManager
-from gateway.config import load_config
+from gateway.config import load_config, resolve_config_path
 from gateway.errors import BackendError
 from gateway.health_monitor import HealthMonitor
 from gateway.http_server import create_app
@@ -44,7 +44,6 @@ from gateway.sessions import SessionFilter, SessionPurger
 
 DEFAULT_PORT = 8080
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_CONFIG_PATH = "config/config.json"
 GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 5
 """Prazo máximo que o uvicorn espera conexões abertas fecharem sozinhas antes
 de forçar. Sem isso, o console de logs (SSE, sempre aberto) trava o shutdown
@@ -146,7 +145,7 @@ async def main() -> int:
         logger.error("MCP_GATEWAY_PORT fora do intervalo válido (1-65535)", value=port_raw)
         return 1
 
-    config_path = Path(os.environ.get("MCP_GATEWAY_CONFIG", DEFAULT_CONFIG_PATH))
+    config_path = resolve_config_path(os.environ.get("MCP_GATEWAY_CONFIG"))
     try:
         config = load_config(config_path)
     except ValueError as exc:
@@ -297,7 +296,12 @@ async def _graceful_shutdown(
         raise asyncio.CancelledError
 
 
-if __name__ == "__main__":
+def run() -> None:
+    """Entry point síncrono: ``python main.py`` e o console script ``sentinel``.
+
+    Converte o ciclo ``asyncio.run(main())`` em exit code — Ctrl+C/shutdown
+    gracioso saem com 0 sem traceback; erro inesperado sai com 1.
+    """
     try:
         sys.exit(asyncio.run(main()))
     except (KeyboardInterrupt, asyncio.CancelledError, SystemExit):
@@ -307,3 +311,7 @@ if __name__ == "__main__":
     except Exception:
         # Erro inesperado: deixa traceback e encerra com código 1.
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run()
