@@ -1,6 +1,7 @@
 # Sentinel (MCP Gateway)  
   
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)  
+[![CI](https://github.com/ioNeXd/mcp-sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/ioNeXd/mcp-sentinel/actions/workflows/ci.yml)  
   
 Um único ponto de entrada para todos os seus servidores MCP. O Sentinel  
 inicia, agrega e monitora vários backends MCP (locais e remotos) e os expõe  
